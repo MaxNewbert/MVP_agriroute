@@ -1,6 +1,9 @@
 """Contractor Setup — profile, home base, work rates, costs, equipment."""
 import streamlit as st
-from utils.data_models import save_data, OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS, DEFAULT_FUEL, DEFAULT_SETUP_TIMES
+import pandas as pd
+from utils.data_models import (save_data, OPERATION_TYPES, DEFAULT_WORK_RATES,
+                                DEFAULT_COSTS, DEFAULT_FUEL, DEFAULT_SETUP_TIMES,
+                                DEFAULT_OVERHEADS)
 
 
 def _geocode(address: str):
@@ -199,20 +202,162 @@ def render(data: dict):
                 prev_cols[i+1].metric(f"{op} (per ha)", f"£{lpha * price:.2f}")
 
     # ── Equipment Register ────────────────────────────────────────────────────
-    with st.expander("Equipment Register"):
-        st.markdown("List your machinery (used to auto-populate completion reports).")
-        equipment = data.get("equipment", [])
+    with st.expander("Equipment Register (completion reports)"):
+        st.info(
+            "This list is now **automatically populated** from the machines you add in "
+            "**Equipment Costs & Depreciation** below. "
+            "Add or remove machines there and this list will update instantly."
+        )
+        _reg_names = [e["name"] for e in data.get("equipment_register", [])]
+        if _reg_names:
+            for _n in _reg_names:
+                st.markdown(f"- {_n}")
+        else:
+            st.caption("No machines in the register yet.")
 
-        with st.form("form_equipment"):
-            equip_raw = st.text_area(
-                "One item per line  (e.g. 'Amazone UX5200 — 24m boom')",
-                value="\n".join(equipment),
-                height=150,
+    # ── Equipment Costs & Depreciation ────────────────────────────────────────
+    with st.expander("Equipment Costs & Depreciation", expanded=False):
+        st.markdown(
+            "Track depreciation and fixed costs per machine so the Day Planner can show "
+            "your **real net margin** after equipment, fuel and overheads — not just after fuel alone."
+        )
+        st.caption(
+            "Annual depreciation = (Purchase price − Residual value) ÷ Useful life. "
+            "Annual equipment cost = depreciation + fixed costs (finance, insurance, storage, servicing). "
+            "Cost per hectare = annual equipment cost ÷ annual hectares worked."
+        )
+
+        equip_register = data.get("equipment_register", [])
+
+        # ── Add equipment ──────────────────────────────────────────────────
+        with st.form("form_add_equip", clear_on_submit=True):
+            st.markdown("**Add a machine**")
+            ec1, ec2, ec3 = st.columns(3)
+            new_equip_name   = ec1.text_input("Machine name",
+                                               placeholder="e.g. Amazone UX5200 Sprayer")
+            new_purchase     = ec2.number_input("Purchase price (£)", value=0.0,
+                                                 min_value=0.0, step=1000.0, format="%.0f")
+            new_residual     = ec3.number_input("Residual / sale value (£)", value=0.0,
+                                                 min_value=0.0, step=500.0, format="%.0f",
+                                                 help="Expected value when you sell/scrap it")
+            ec4, ec5, ec6 = st.columns(3)
+            new_life_yrs     = ec4.number_input("Useful life (years)", value=10.0,
+                                                  min_value=1.0, max_value=40.0, step=1.0)
+            new_fixed_annual = ec5.number_input("Annual fixed costs (£/yr)", value=0.0,
+                                                  min_value=0.0, step=100.0, format="%.0f",
+                                                  help="Finance, insurance, storage, annual servicing")
+            new_annual_ha    = ec6.number_input("Annual hectares worked", value=1000.0,
+                                                  min_value=1.0, step=100.0, format="%.0f",
+                                                  help="How many hectares this machine works per year")
+            new_op_types     = st.multiselect(
+                "Operation types this machine is used for",
+                OPERATION_TYPES,
+                default=OPERATION_TYPES,
+                help="Used to filter the machine selector in the Day Planner when you pick an operation",
             )
-            if st.form_submit_button("Save Equipment"):
-                data["equipment"] = [e.strip() for e in equip_raw.splitlines() if e.strip()]
+
+            if st.form_submit_button("Add Machine", type="primary"):
+                if new_equip_name.strip():
+                    data.setdefault("equipment_register", []).append({
+                        "name":               new_equip_name.strip(),
+                        "purchase_price":     new_purchase,
+                        "residual_value":     new_residual,
+                        "useful_life_years":  new_life_yrs,
+                        "annual_fixed_costs": new_fixed_annual,
+                        "annual_hectares":    new_annual_ha,
+                        "operation_types":    new_op_types,
+                    })
+                    # Keep the simple equipment list in sync
+                    data["equipment"] = [e["name"] for e in data["equipment_register"]]
+                    save_data(data)
+                    st.success(f"'{new_equip_name.strip()}' added.")
+                    st.rerun()
+                else:
+                    st.warning("Enter a machine name.")
+
+        # ── Display + cost breakdown ───────────────────────────────────────
+        equip_register = data.get("equipment_register", [])
+        if equip_register:
+            rows = []
+            for e in equip_register:
+                pp  = e.get("purchase_price",     0)
+                rv  = e.get("residual_value",      0)
+                ly  = max(e.get("useful_life_years",  1), 1)
+                fc  = e.get("annual_fixed_costs",  0)
+                ha  = max(e.get("annual_hectares", 1), 1)
+                ann_depr = (pp - rv) / ly
+                ann_cost = ann_depr + fc
+                cpha     = ann_cost / ha
+                rows.append({
+                    "Machine":              e["name"],
+                    "Operations":           ", ".join(e.get("operation_types", OPERATION_TYPES)) or "All",
+                    "Purchase (£)":         f"£{pp:,.0f}",
+                    "Residual (£)":         f"£{rv:,.0f}",
+                    "Life (yr)":            f"{ly:.0f}",
+                    "Fixed costs (£/yr)":   f"£{fc:,.0f}",
+                    "Annual ha":            f"{ha:,.0f}",
+                    "Ann. depreciation":    f"£{ann_depr:,.0f}",
+                    "Ann. total cost":      f"£{ann_cost:,.0f}",
+                    "Cost per ha":          f"£{cpha:.2f}",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            total_cpha = sum(
+                ((e.get("purchase_price", 0) - e.get("residual_value", 0))
+                 / max(e.get("useful_life_years", 1), 1)
+                 + e.get("annual_fixed_costs", 0))
+                / max(e.get("annual_hectares", 1), 1)
+                for e in equip_register
+            )
+            st.metric("Combined equipment cost per hectare", f"£{total_cpha:.2f}/ha",
+                      help="Sum of all machines — used in the Day Planner real ROI calculation")
+
+            del_equip = st.selectbox(
+                "Remove a machine",
+                ["—"] + [e["name"] for e in equip_register],
+                key="del_equip_select",
+            )
+            if del_equip != "—" and st.button("Remove machine", type="secondary"):
+                data["equipment_register"] = [
+                    e for e in equip_register if e["name"] != del_equip
+                ]
+                data["equipment"] = [e["name"] for e in data["equipment_register"]]
                 save_data(data)
-                st.success("Equipment list saved.")
+                st.rerun()
+        else:
+            st.info("No machines added yet. Use the form above to add your equipment.")
+
+        # ── Overheads & operator cost ──────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**Business Overheads & Operator Cost**")
+        st.caption(
+            "These are included in the Day Planner real ROI. "
+            "Leave at zero if already accounted for in your charge rate."
+        )
+        overheads = data.get("overheads", DEFAULT_OVERHEADS.copy())
+        with st.form("form_overheads"):
+            oh1, oh2 = st.columns(2)
+            oh_per_ha = oh1.number_input(
+                "Business overhead (£/ha)",
+                value=float(overheads.get("overhead_per_ha", 0.0)),
+                min_value=0.0, max_value=500.0, step=0.5, format="%.2f",
+                help="General business costs allocated per hectare — office, accountant, "
+                     "phone, general insurance, fuel cards etc.",
+            )
+            op_cost_hr = oh2.number_input(
+                "Operator cost (£/hr)",
+                value=float(overheads.get("operator_cost_per_hr", 0.0)),
+                min_value=0.0, max_value=200.0, step=0.5, format="%.2f",
+                help="Operator wage or subcontract rate per hour. "
+                     "Set to 0 if you are the owner-operator and pay yourself via profit.",
+            )
+            if st.form_submit_button("Save Overheads", type="primary"):
+                data["overheads"] = {
+                    "overhead_per_ha":      oh_per_ha,
+                    "operator_cost_per_hr": op_cost_hr,
+                }
+                save_data(data)
+                st.success("Overhead settings saved.")
 
     # ── Agronomist Register ───────────────────────────────────────────────────
     with st.expander("Agronomist / Advisor Register"):
@@ -221,7 +366,6 @@ def render(data: dict):
 
         # Display existing
         if agronomists:
-            import pandas as pd
             ag_df = pd.DataFrame(agronomists)
             st.dataframe(ag_df[["name","company","email","phone"]].rename(columns={
                 "name":"Name","company":"Company","email":"Email","phone":"Phone"

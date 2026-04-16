@@ -1,6 +1,6 @@
 {
   "contractor": {
-    "name": "Max Newbert Ltd",
+    "name": "AgSolutions Contractors Ltd",
     "address": "Manor Farm, Great Cressingham,  Thetford, Norfolk, IP25 6NL",
     "cert_number": "168694351464321",
     "phone": "+4474840 44375",
@@ -396,5 +396,64 @@
       "Fertiliser": 6.0,
       "Harvest": 28.0
     }
-  }
+  },
+  "equipment_register": [
+    {
+      "name": "JD 332M Self-Propelled Sprayer",
+      "purchase_price": 200000.0,
+      "residual_value": 80000.0,
+      "useful_life_years": 10.0,
+      "annual_fixed_costs": 5000.0,
+      "annual_hectares": 1600.0,
+      "operation_types": [
+        "Spraying"
+      ]
+    },
+    {
+      "name": "Amazone ZA-V/ZA-TS Fert dual disc spreader",
+      "purchase_price": 11000.0,
+      "residual_value": 9000.0,
+      "useful_life_years": 10.0,
+      "annual_fixed_costs": 300.0,
+      "annual_hectares": 1600.0,
+      "operation_types": [
+        "Fertiliser"
+      ]
+    },
+    {
+      "name": "Sumo DD 6 Trailed",
+      "purchase_price": 35000.0,
+      "residual_value": 7500.0,
+      "useful_life_years": 10.0,
+      "annual_fixed_costs": 1000.0,
+      "annual_hectares": 1600.0,
+      "operation_types": [
+        "Seeding / Drilling"
+      ]
+    },
+    {
+      "name": "LEXION 6000 Claas Combine",
+      "purchase_price": 220000.0,
+      "residual_value": 125000.0,
+      "useful_life_years": 10.0,
+      "annual_fixed_costs": 3000.0,
+      "annual_hectares": 1600.0,
+      "operation_types": [
+        "Harvest"
+      ]
+    }
+  ],
+  "overheads": {
+    "overhead_per_ha": 3.0,
+    "operator_cost_per_hr": 0.0
+  },
+  "agronomists": [
+    {
+      "name": "Dr Max Newbert",
+      "company": "Syngenta UK LTD",
+      "email": "max.newbert@syngenta.com",
+      "phone": "+447484044375",
+      "notes": "20061186 - BASIS registered"
+    }
+  ]
 }

@@ -79,6 +79,12 @@ DEFAULT_SETUP_TIMES = {
     "Harvest":            20,   # pre-work checks, header height, concave settings
 }
 
+# ── Default overheads & operator cost ────────────────────────────────────
+DEFAULT_OVERHEADS = {
+    "overhead_per_ha":      0.0,   # £/ha — office, accountant, phone, insurance etc.
+    "operator_cost_per_hr": 0.0,   # £/hr — wage/subcontract rate (0 for owner-operator)
+}
+
 # ── Default fuel settings ─────────────────────────────────────────────────────
 DEFAULT_FUEL = {
     "price_per_litre":          1.45,   # £/L — update to current pump price
@@ -153,7 +159,9 @@ def load_data() -> dict:
             "road_litres_per_100km": DEFAULT_FUEL["road_litres_per_100km"],
             "op_litres_per_ha":      DEFAULT_FUEL["op_litres_per_ha"].copy(),
         },
-        "setup_times": DEFAULT_SETUP_TIMES.copy(),
+        "setup_times":       DEFAULT_SETUP_TIMES.copy(),
+        "equipment_register": [],
+        "overheads":         DEFAULT_OVERHEADS.copy(),
     }
 
 

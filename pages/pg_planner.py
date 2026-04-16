@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import date, timedelta
 from utils.data_models import (save_data, calc_priority_score,
                                 OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS,
-                                DEFAULT_FUEL, DEFAULT_SETUP_TIMES)
+                                DEFAULT_FUEL, DEFAULT_SETUP_TIMES, DEFAULT_OVERHEADS)
 from utils.routing import build_day_plan, get_osrm_route, haversine_km
 from utils.weather import check_operation_window, THRESHOLDS
 from utils.fuel_prices import fetch_stations_near, score_refuel_stop
@@ -88,6 +88,43 @@ def render(data: dict):
             min_value=10.0, max_value=120.0, step=5.0,
         )
         min_score = row2[4].slider("Min priority score", 0, 100, 0)
+
+        # Machine selector — filtered to machines tagged for this operation type
+        _all_reg = data.get("equipment_register", [])
+        _op_machines = [
+            e for e in _all_reg
+            if not e.get("operation_types") or op_type in e.get("operation_types", [])
+        ]
+        _machine_options = ["All machines (combined cost)"] + [e["name"] for e in _op_machines]
+        if len(_machine_options) > 1:
+            row3 = st.columns([3, 5])
+            selected_machine_name = row3[0].selectbox(
+                "Machine for today",
+                _machine_options,
+                help="Select the machine you are using — costs are pulled from Equipment Costs & Depreciation",
+            )
+            # Show the selected machine's cost/ha as a hint
+            if selected_machine_name != "All machines (combined cost)":
+                _sm = next((e for e in _op_machines if e["name"] == selected_machine_name), None)
+                if _sm:
+                    _sm_cpha = (
+                        (_sm.get("purchase_price", 0) - _sm.get("residual_value", 0))
+                        / max(_sm.get("useful_life_years", 1), 1)
+                        + _sm.get("annual_fixed_costs", 0)
+                    ) / max(_sm.get("annual_hectares", 1), 1)
+                    row3[1].caption(
+                        f"Equipment cost: **£{_sm_cpha:.2f}/ha** "
+                        f"(£{(_sm.get('purchase_price',0)-_sm.get('residual_value',0))/max(_sm.get('useful_life_years',1),1):,.0f}/yr depr. "
+                        f"+ £{_sm.get('annual_fixed_costs',0):,.0f}/yr fixed costs "
+                        f"÷ {_sm.get('annual_hectares',1):,.0f} ha/yr)"
+                    )
+        else:
+            selected_machine_name = "All machines (combined cost)"
+            if not _all_reg:
+                st.caption(
+                    "No equipment added — add machines in **Contractor Setup → Equipment Costs & Depreciation** "
+                    "to track real equipment costs per operation."
+                )
 
     all_fields = _all_fields_flat(farms)
 
@@ -196,17 +233,56 @@ def render(data: dict):
     total_op_cost   = total_op_l * fuel_price
 
     total_fuel_cost = total_road_cost + total_op_cost
-    net_margin      = result["total_revenue"] - total_fuel_cost
+
+    # ── Equipment depreciation & fixed cost ───────────────────────────────────
+    equip_register = data.get("equipment_register", [])
+
+    def _machine_cpha(e: dict) -> float:
+        pp  = e.get("purchase_price",    0)
+        rv  = e.get("residual_value",    0)
+        ly  = max(e.get("useful_life_years",  1), 1)
+        fc  = e.get("annual_fixed_costs", 0)
+        ha  = max(e.get("annual_hectares", 1), 1)
+        return ((pp - rv) / ly + fc) / ha
+
+    if selected_machine_name != "All machines (combined cost)":
+        # Use only the selected machine's cost
+        _sel_machine = next(
+            (e for e in equip_register if e["name"] == selected_machine_name), None
+        )
+        equip_cost_per_ha = _machine_cpha(_sel_machine) if _sel_machine else 0.0
+    else:
+        equip_cost_per_ha = sum(_machine_cpha(e) for e in equip_register)
+
+    total_equip_cost = equip_cost_per_ha * result["total_ha"]
+
+    # ── Business overheads & operator cost ────────────────────────────────────
+    overheads        = data.get("overheads", DEFAULT_OVERHEADS.copy())
+    overhead_per_ha  = float(overheads.get("overhead_per_ha", 0.0))
+    op_cost_hr       = float(overheads.get("operator_cost_per_hr", 0.0))
+    total_overhead   = overhead_per_ha * result["total_ha"]
+
+    # Operator time = all working time (field work + setup + travel, both ways)
+    _op_travel_min   = sum(s["travel_min"] for s in plan) + result.get("return_dist_km", 0) / max(avg_speed, 1) * 60
+    _op_setup_min    = sum(s.get("setup_min", 0) for s in plan)
+    _op_work_min     = sum(s.get("work_min", 0) for s in plan)
+    operator_hours   = (_op_travel_min + _op_setup_min + _op_work_min) / 60
+    total_op_wage    = op_cost_hr * operator_hours
+
+    total_all_costs  = total_fuel_cost + total_equip_cost + total_overhead + total_op_wage
+    net_margin       = result["total_revenue"] - total_fuel_cost          # fuel-only (legacy)
+    real_net_margin  = result["total_revenue"] - total_all_costs
 
     # Summary metrics
     m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("Fields",          result["fields_count"])
-    m2.metric("Total Ha",        f"{result['total_ha']} ha")
-    m3.metric("Revenue",         f"£{result['total_revenue']:,.2f}")
-    m4.metric("Fuel Cost",       f"£{total_fuel_cost:,.2f}",
-              delta=f"-£{total_fuel_cost:,.2f}", delta_color="inverse")
-    m5.metric("Net (after fuel)", f"£{net_margin:,.2f}")
-    m6.metric("Finish / Return", f"{result['finish_time']} / {result['return_time']}")
+    m1.metric("Fields",           result["fields_count"])
+    m2.metric("Total Ha",         f"{result['total_ha']} ha")
+    m3.metric("Revenue",          f"£{result['total_revenue']:,.2f}")
+    m4.metric("Total Costs",      f"£{total_all_costs:,.2f}",
+              delta=f"-£{total_all_costs:,.2f}", delta_color="inverse")
+    m5.metric("Real Net Margin",  f"£{real_net_margin:,.2f}",
+              help="Revenue minus fuel + equipment depreciation + overheads + operator cost")
+    m6.metric("Finish / Return",  f"{result['finish_time']} / {result['return_time']}")
 
     # ── Over / under day indicator ────────────────────────────────────────────
     total_travel_min = sum(s["travel_min"] for s in plan)
@@ -238,17 +314,62 @@ def render(data: dict):
                     delta=f"{total_day_hr:.1f} hr of {budget_hr:.1f} hr", delta_color="normal")
         st.success(f"Plan fits well within your {budget_hr:.0f}-hour day ({total_day_hr:.1f} hr total).")
 
-    # Fuel breakdown
-    with st.expander("Fuel Breakdown", expanded=False):
+    # Cost breakdown
+    with st.expander("Full Cost Breakdown", expanded=False):
+        st.markdown("**Fuel**")
         fb1, fb2, fb3, fb4 = st.columns(4)
-        fb1.metric("Road distance",      f"{total_road_km:.1f} km")
-        fb2.metric("Road fuel",          f"{total_road_l:.1f} L  (£{total_road_cost:.2f})")
-        fb3.metric("In-field fuel",      f"{total_op_l:.1f} L  (£{total_op_cost:.2f})")
-        fb4.metric("Fuel price used",    f"£{fuel_price:.2f}/L")
+        fb1.metric("Road distance",   f"{total_road_km:.1f} km")
+        fb2.metric("Road fuel",       f"{total_road_l:.1f} L  (£{total_road_cost:.2f})")
+        fb3.metric("In-field fuel",   f"{total_op_l:.1f} L  (£{total_op_cost:.2f})")
+        fb4.metric("Fuel price used", f"£{fuel_price:.2f}/L")
         st.caption(
             f"Road: {road_l100} L/100km | In-field ({op_label}): {op_lpha} L/ha — "
             f"update rates in **Contractor Setup → Fuel & Running Costs**"
         )
+
+        st.markdown("**Equipment (depreciation + fixed costs)**")
+        if equip_register:
+            eq_rows = []
+            for e in equip_register:
+                pp  = e.get("purchase_price",    0)
+                rv  = e.get("residual_value",    0)
+                ly  = max(e.get("useful_life_years",  1), 1)
+                fc  = e.get("annual_fixed_costs", 0)
+                ha  = max(e.get("annual_hectares", 1), 1)
+                ann_cost = (pp - rv) / ly + fc
+                cpha     = ann_cost / ha
+                day_cost = cpha * result["total_ha"]
+                eq_rows.append({
+                    "Machine":          e["name"],
+                    "Cost/ha":          f"£{cpha:.2f}",
+                    f"Today ({result['total_ha']} ha)": f"£{day_cost:.2f}",
+                })
+            st.dataframe(pd.DataFrame(eq_rows), use_container_width=True, hide_index=True)
+            st.metric("Total equipment cost today",
+                      f"£{total_equip_cost:.2f}",
+                      delta=f"£{equip_cost_per_ha:.2f}/ha", delta_color="off")
+        else:
+            st.info("No equipment added — add machines in **Contractor Setup → Equipment Costs & Depreciation** "
+                    "for a full cost picture.")
+
+        st.markdown("**Overheads & Operator**")
+        ov1, ov2, ov3 = st.columns(3)
+        ov1.metric("Business overhead",  f"£{total_overhead:.2f}",
+                   delta=f"£{overhead_per_ha:.2f}/ha" if overhead_per_ha else "not set",
+                   delta_color="off")
+        ov2.metric("Operator cost",      f"£{total_op_wage:.2f}",
+                   delta=f"£{op_cost_hr:.2f}/hr × {operator_hours:.1f} hr" if op_cost_hr else "not set",
+                   delta_color="off")
+        ov3.metric("Total all costs",    f"£{total_all_costs:.2f}")
+
+        st.markdown("**Summary**")
+        sr1, sr2, sr3 = st.columns(3)
+        sr1.metric("Revenue",            f"£{result['total_revenue']:,.2f}")
+        sr2.metric("All costs",          f"£{total_all_costs:,.2f}",
+                   delta=f"-£{total_all_costs:,.2f}", delta_color="inverse")
+        sr3.metric("Real net margin",    f"£{real_net_margin:,.2f}",
+                   delta=f"£{real_net_margin / max(result['total_ha'], 1):.2f}/ha",
+                   delta_color="normal" if real_net_margin > 0 else "inverse")
 
     # Detailed schedule table
     plan_rows = []
@@ -256,6 +377,11 @@ def render(data: dict):
         stop_road_l    = stop["distance_km"] * road_l100 / 100
         stop_op_l      = stop["hectares"] * op_lpha
         stop_fuel_cost = (stop_road_l + stop_op_l) * fuel_price
+        stop_equip     = equip_cost_per_ha * stop["hectares"]
+        stop_overhead  = overhead_per_ha   * stop["hectares"]
+        stop_op_time   = (stop["travel_min"] + stop.get("setup_min", 0) + stop.get("work_min", 0)) / 60
+        stop_op_wage   = op_cost_hr * stop_op_time
+        stop_total_cost = stop_fuel_cost + stop_equip + stop_overhead + stop_op_wage
         s_min  = stop.get("setup_min", 0)
         w_min  = stop.get("work_min", round(stop["hectares"] / work_rate * 60, 0))
         plan_rows.append({
@@ -272,10 +398,12 @@ def render(data: dict):
             "Work Start":   stop.get("work_start_time", stop["arrive_time"]),
             "Finish":       stop["finish_time"],
             "Revenue":      f"£{stop['revenue']:,.2f}",
-            "Travel Fuel":  f"{stop_road_l:.1f} L",
-            "Field Fuel":   f"{stop_op_l:.1f} L",
             "Fuel Cost":    f"£{stop_fuel_cost:.2f}",
-            "Net":          f"£{stop['revenue'] - stop_fuel_cost:,.2f}",
+            "Equip Cost":   f"£{stop_equip:.2f}",
+            "Overhead":     f"£{stop_overhead:.2f}",
+            "Op. Wage":     f"£{stop_op_wage:.2f}",
+            "Total Cost":   f"£{stop_total_cost:.2f}",
+            "Net":          f"£{stop['revenue'] - stop_total_cost:,.2f}",
             "Full":         "Yes" if stop["full_field"] else "Partial",
         })
 
@@ -482,17 +610,17 @@ def render(data: dict):
                        delta=f"£{sel['net_roi_impact'] - best['net_roi_impact']:+.2f} vs best" if selected_idx != 0 else None,
                        delta_color="inverse")
 
-            adjusted_net = net_margin - sel["net_roi_impact"]
+            adjusted_net = real_net_margin - sel["net_roi_impact"]
             if selected_idx == 0:
                 st.success(
-                    f"With this stop: net margin £{net_margin:.2f} → "
+                    f"With this stop: real net margin £{real_net_margin:.2f} → "
                     f"**£{adjusted_net:.2f}** after fill-up "
                     f"({sel['detour_km']:.1f} km detour, {sel['time_lost_min']:.0f} min lost)"
                 )
             else:
                 extra = sel["net_roi_impact"] - best["net_roi_impact"]
                 st.info(
-                    f"With this stop: net margin → **£{adjusted_net:.2f}**. "
+                    f"With this stop: real net margin → **£{adjusted_net:.2f}**. "
                     f"Costs **£{extra:.2f} more** than the Best ROI option "
                     f"({best['brand']} {best.get('postcode', '')} at {best['ppl']:.1f}p/L)."
                 )
@@ -607,12 +735,12 @@ def render(data: dict):
                     _mc6.metric("Time lost",      f"{_scored_manual['time_lost_min']:.0f} min")
                     _mc7.metric("Total ROI cost", f"£{_scored_manual['net_roi_impact']:.2f}")
 
-                    _adj_net = net_margin - _scored_manual["net_roi_impact"]
+                    _adj_net = real_net_margin - _scored_manual["net_roi_impact"]
                     st.success(
                         f"**{_picked['brand']}** added to route — "
                         f"{_scored_manual['detour_km']:.1f} km detour, "
                         f"{_scored_manual['time_lost_min']:.0f} min lost. "
-                        f"Net margin after fill-up: **£{_adj_net:.2f}**"
+                        f"Real net margin after fill-up: **£{_adj_net:.2f}**"
                     )
                     if not _has_live:
                         st.caption(
@@ -922,6 +1050,9 @@ def render(data: dict):
                 operator=contractor.get("operators", [""])[0],
                 hectares=stop["hectares"],
                 revenue=stop["revenue"],
+                equipment=(selected_machine_name
+                           if selected_machine_name != "All machines (combined cost)"
+                           else ", ".join(e["name"] for e in equip_register) or ""),
             )
             data.setdefault("operations_log", []).append(log_entry)
             # Update days_since_last_op
