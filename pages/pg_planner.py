@@ -1060,10 +1060,35 @@ def render(data: dict):
 
     from utils.data_models import new_operation_log
     for stop in plan:
-        col_a, col_b = st.columns([4, 1])
+        col_a, col_b, col_c = st.columns([4, 1, 1])
         col_a.markdown(f"**{stop['field_name']}** ({stop['farm_name']}) — {stop['hectares']} ha")
         if stop["field_id"] in _already_logged:
             col_b.success("✓ Done")
+            if col_c.button("Undo", key=f"undo_{stop['field_id']}", type="secondary",
+                            help="Remove this completion record from the log"):
+                # Capture IDs to remove before filtering
+                _removed_ids = {
+                    e["id"] for e in data.get("operations_log", [])
+                    if (e.get("field_id") == stop["field_id"]
+                        and e.get("operation") == op_label
+                        and e.get("date") == _plan_date_str)
+                }
+                # Remove matching log entries
+                data["operations_log"] = [
+                    e for e in data.get("operations_log", [])
+                    if e.get("id") not in _removed_ids
+                ]
+                # Reset field state and clean completed_operations
+                fid  = stop["field_id"]
+                fmid = stop["farm_id"]
+                if fmid in data["farms"] and fid in data["farms"][fmid]["fields"]:
+                    data["farms"][fmid]["fields"][fid]["days_since_last_op"][op_label] = 999
+                    data["farms"][fmid]["fields"][fid]["completed_operations"] = [
+                        oid for oid in data["farms"][fmid]["fields"][fid].get("completed_operations", [])
+                        if oid not in _removed_ids
+                    ]
+                save_data(data)
+                st.rerun()
         else:
             if col_b.button("Mark Done", key=f"done_{stop['field_id']}"):
                 log_entry = new_operation_log(
