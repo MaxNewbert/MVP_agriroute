@@ -289,6 +289,10 @@ def render(data: dict):
     needs_refuel = st.checkbox("I need to fill up today", value=False,
                                help="Find the best fuel station on your route based on price vs detour cost")
 
+    if not needs_refuel:
+        st.session_state.pop("_scored_stations", None)
+        st.session_state.pop("_refuel_sel_latlon", None)
+
     if needs_refuel:
         rf1, rf2, rf3 = st.columns(3)
         litres_needed = rf1.number_input(
@@ -392,6 +396,7 @@ def render(data: dict):
                 for s in stations[:20]
             ]
             scored.sort(key=lambda s: s["net_roi_impact"])
+            st.session_state["_scored_stations"] = scored  # share with map/table section
 
             best_station  = scored[0]
             cheapest_price = min(s["ppl"] for s in scored)
@@ -557,14 +562,60 @@ def render(data: dict):
                 ),
             ).add_to(m)
 
-        # Fuel stations
+        # Fuel stations — enrich popups with live prices if available
+        # Build a price lookup from whatever was fetched (keyed by rounded lat/lon)
+        _live_stations = st.session_state.get("fuel_station_data", {}).get("stations", [])
+        _price_lookup = {
+            (round(s["lat"], 3), round(s["lon"], 3)): s
+            for s in _live_stations
+        }
+
+        def _find_live_price(lat, lon):
+            """Return live-price station dict if within ~200m, else None."""
+            for (llat, llon), ls in _price_lookup.items():
+                if abs(lat - llat) < 0.002 and abs(lon - llon) < 0.002:
+                    return ls
+            return None
+
+        # Which station (if any) has the user selected in the refuel section?
+        _sel_station = st.session_state.get("_refuel_sel_latlon")  # (lat, lon) stored below
+
         fuel_fg = folium.FeatureGroup(name="Fuel Stations", show=True)
-        for fs in result.get("fuel_stations", [])[:5]:
+        for fs in result.get("fuel_stations", [])[:10]:
+            live = _find_live_price(fs["lat"], fs["lon"])
+            dppl = live.get("diesel_ppl") if live else None
+            pppl = live.get("petrol_ppl") if live else None
+
+            price_html = ""
+            if dppl:
+                price_html += f"<br>🔵 Diesel: <b>{dppl:.1f}p/L</b>"
+            if pppl:
+                price_html += f"<br>⚪ Petrol: {pppl:.1f}p/L"
+            if not live:
+                price_html += "<br><i>Price: not available (enter manually below)</i>"
+
+            popup_html = (
+                f"<b>{fs['brand']}</b><br>"
+                f"{fs.get('address', '')}<br>"
+                f"{fs.get('distance_km', '?')} km from route centre"
+                f"{price_html}"
+            )
+
+            # Highlight the selected refuel station in orange
+            is_selected = bool(
+                _sel_station and
+                abs(fs["lat"] - _sel_station[0]) < 0.002 and
+                abs(fs["lon"] - _sel_station[1]) < 0.002
+            )
+            marker_color = "orange" if is_selected else "gray"
+            marker_icon  = "star"   if is_selected else "tint"
+
             folium.Marker(
                 [fs["lat"], fs["lon"]],
-                popup=f"<b>{fs['brand']}</b><br>{fs.get('address','')}<br>{fs['distance_km']} km from route",
-                tooltip=f"Fuel: {fs['brand']}",
-                icon=folium.Icon(color="gray", icon="tint", prefix="fa"),
+                popup=folium.Popup(popup_html, max_width=240),
+                tooltip=f"{'★ Selected: ' if is_selected else ''}{fs['brand']}"
+                        + (f" — {dppl:.1f}p/L diesel" if dppl else ""),
+                icon=folium.Icon(color=marker_color, icon=marker_icon, prefix="fa"),
             ).add_to(fuel_fg)
         fuel_fg.add_to(m)
 
@@ -577,18 +628,132 @@ def render(data: dict):
     except ImportError:
         st.info("Install streamlit-folium for the route map.")
 
+    # ── Google Maps navigation link ────────────────────────────────────────────
+    _gm_stops = [(home_lat, home_lon)]
+    for stop in plan:
+        _gm_stops.append((stop["lat"], stop["lon"]))
+    _gm_stops.append((home_lat, home_lon))  # return home
+
+    # Insert the selected fuel station at the best leg position (if chosen)
+    _sel_idx_nav = st.session_state.get("selected_fuel_station_idx")
+    _scored_nav  = st.session_state.get("_scored_stations", [])
+    _fuel_label  = ""
+    if needs_refuel and _scored_nav and _sel_idx_nav is not None:
+        _sel_s = _scored_nav[_sel_idx_nav]
+        _insert_at = min(_sel_s.get("best_insertion", len(_gm_stops) - 2) + 1,
+                         len(_gm_stops) - 1)
+        _gm_stops.insert(_insert_at, (_sel_s["lat"], _sel_s["lon"]))
+        _fuel_label = f" + {_sel_s['brand']} fuel stop"
+
+    # Google Maps /dir/ URL — trim to 10 stops if needed (GM limit on mobile)
+    _MAX_GM = 10
+    _trimmed = False
+    if len(_gm_stops) > _MAX_GM:
+        _step   = (len(_gm_stops) - 2) / (_MAX_GM - 2)
+        _middle = [_gm_stops[round(1 + i * _step)] for i in range(_MAX_GM - 2)]
+        _gm_stops = [_gm_stops[0]] + _middle + [_gm_stops[-1]]
+        _trimmed = True
+
+    _gm_url = "https://www.google.com/maps/dir/" + "/".join(
+        f"{lat},{lon}" for lat, lon in _gm_stops
+    )
+
+    nav_col, info_col2 = st.columns([2, 3])
+    nav_col.link_button(
+        f"Open in Google Maps{_fuel_label}",
+        _gm_url,
+        type="primary",
+        help="Opens turn-by-turn driving directions in Google Maps",
+    )
+    if _trimmed:
+        info_col2.caption(
+            f"Route has {len(plan) + 2} stops — trimmed to {_MAX_GM} for Google Maps. "
+            "All stops shown on the map above."
+        )
+    elif _fuel_label:
+        info_col2.caption(
+            f"{len(plan)} field stops{_fuel_label} — home → fields → fuel → home."
+        )
+    else:
+        info_col2.caption(
+            f"{len(plan)} field stop{'s' if len(plan) != 1 else ''} — home → fields → home. "
+            "Select a fuel station above to include it in the route."
+        )
+
     # ── Fuel Stations ─────────────────────────────────────────────────────────
     fuel_stations = result.get("fuel_stations", [])
     if fuel_stations:
         st.subheader("Fuel Stations Near Route")
-        st.caption("Check current prices before visiting. Displayed nearest to route midpoint.")
-        fuel_rows = [{
-            "Brand":    fs["brand"],
-            "Name":     fs["name"],
-            "Address":  fs.get("address", ""),
-            "Dist (km)": fs["distance_km"],
-        } for fs in fuel_stations]
-        st.dataframe(pd.DataFrame(fuel_rows), use_container_width=True, hide_index=True)
+
+        # Build a price lookup from live data in session state (if fetched)
+        _live_for_table = st.session_state.get("fuel_station_data", {}).get("stations", [])
+        _price_by_loc = {
+            (round(s["lat"], 3), round(s["lon"], 3)): s
+            for s in _live_for_table
+        }
+
+        def _get_live(lat, lon):
+            for (llat, llon), s in _price_by_loc.items():
+                if abs(lat - llat) < 0.002 and abs(lon - llon) < 0.002:
+                    return s
+            return None
+
+        setup_ppl = round(fuel_price * 100, 1)
+
+        fuel_rows = []
+        for fs in fuel_stations:
+            live = _get_live(fs["lat"], fs["lon"])
+            dppl = live.get("diesel_ppl") if live else None
+            pppl = live.get("petrol_ppl") if live else None
+            fuel_rows.append({
+                "Brand":        fs["brand"],
+                "Name":         fs.get("name", fs["brand"]),
+                "Address":      fs.get("address", ""),
+                "Dist (km)":    fs.get("distance_km", ""),
+                "Diesel (p/L)": dppl if dppl is not None else setup_ppl,
+                "Petrol (p/L)": pppl if pppl is not None else setup_ppl,
+                "Price source": "Live" if live else "Manual — edit below",
+                "_lat":         fs["lat"],
+                "_lon":         fs["lon"],
+            })
+
+        st.caption(
+            "Prices shown where available from live retailer feeds. "
+            "Edit **Diesel** or **Petrol** columns for any station — "
+            "values default to your Setup page fuel rate."
+        )
+        edited_fs = st.data_editor(
+            pd.DataFrame(fuel_rows).drop(columns=["_lat", "_lon"]),
+            column_config={
+                "Brand":        st.column_config.TextColumn(disabled=True),
+                "Name":         st.column_config.TextColumn(disabled=True),
+                "Address":      st.column_config.TextColumn(disabled=True),
+                "Dist (km)":    st.column_config.NumberColumn(disabled=True, format="%.1f"),
+                "Diesel (p/L)": st.column_config.NumberColumn(
+                    "Diesel (p/L)", min_value=50.0, max_value=300.0,
+                    format="%.1f",
+                    help="Edit to enter today's pump price",
+                ),
+                "Petrol (p/L)": st.column_config.NumberColumn(
+                    "Petrol (p/L)", min_value=50.0, max_value=300.0,
+                    format="%.1f",
+                    help="Edit to enter today's pump price",
+                ),
+                "Price source": st.column_config.TextColumn(disabled=True),
+            },
+            use_container_width=True, hide_index=True,
+            key="fuel_station_table",
+        )
+
+        # Store selected refuel station lat/lon for map highlight
+        # (driven by the refuel selectbox in the section above)
+        _sel_idx = st.session_state.get("selected_fuel_station_idx")
+        _scored  = st.session_state.get("_scored_stations", [])
+        if needs_refuel and _scored and _sel_idx is not None:
+            _sel = _scored[_sel_idx]
+            st.session_state["_refuel_sel_latlon"] = (_sel["lat"], _sel["lon"])
+        else:
+            st.session_state.pop("_refuel_sel_latlon", None)
     else:
         st.info("No fuel stations found near route (Overpass API may be unavailable).")
 
