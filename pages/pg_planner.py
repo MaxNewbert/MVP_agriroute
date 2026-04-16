@@ -509,6 +509,121 @@ def render(data: dict):
                     "Total ROI cost = fill cost + revenue lost to detour time."
                 )
 
+    # ── Manual fuel stop picker (active when live Refuel flow is off) ────────
+    if not needs_refuel:
+        # Build merged station list: Overpass + any live-price stations already fetched
+        _op_stations  = result.get("fuel_stations", [])
+        _live_fs_pick = st.session_state.get("fuel_station_data", {}).get("stations", [])
+        _seen_pick    = {(round(s["lat"], 2), round(s["lon"], 2)) for s in _op_stations}
+        _pick_all     = list(_op_stations)
+        for _ls in _live_fs_pick[:20]:
+            _key = (round(_ls["lat"], 2), round(_ls["lon"], 2))
+            if _key not in _seen_pick:
+                _seen_pick.add(_key)
+                _pick_all.append({
+                    "brand":       _ls.get("brand", ""),
+                    "name":        _ls.get("name", _ls.get("brand", "")),
+                    "address":     _ls.get("address", _ls.get("postcode", "")),
+                    "lat":         _ls["lat"],
+                    "lon":         _ls["lon"],
+                    "distance_km": _ls.get("distance_from_centre_km", 0),
+                    "diesel_ppl":  _ls.get("diesel_ppl"),
+                    "petrol_ppl":  _ls.get("petrol_ppl"),
+                })
+
+        with st.expander("Add a fuel stop to your route (optional)", expanded=False):
+            if not _pick_all:
+                st.info(
+                    "No fuel stations found near your route yet "
+                    "(OpenStreetMap lookup may have timed out). "
+                    "Click below to search via live UK retailer feeds."
+                )
+                _wps_pick = result.get("waypoints", [(home_lat, home_lon)])
+                _rc_lat   = sum(w[0] for w in _wps_pick) / len(_wps_pick)
+                _rc_lon   = sum(w[1] for w in _wps_pick) / len(_wps_pick)
+                if st.button("Search for nearby fuel stations", key="search_fs_manual"):
+                    with st.spinner("Fetching stations from UK retailer feeds..."):
+                        _fetched = _cached_fuel_prices(
+                            _rc_lat, _rc_lon, radius_km=25.0, fuel_type="diesel"
+                        )
+                    st.session_state["fuel_station_data"] = _fetched
+                    st.rerun()
+            else:
+                _pick_labels = ["(No fuel stop)"] + [
+                    f"{s['brand']} — {s.get('address', s.get('name', ''))} "
+                    f"({s.get('distance_km', '?')} km)"
+                    for s in _pick_all
+                ]
+                _manual_idx = st.selectbox(
+                    "Choose a station to add to your route",
+                    range(len(_pick_labels)),
+                    format_func=lambda i: _pick_labels[i],
+                    key="manual_fuel_stop_idx",
+                )
+
+                if _manual_idx > 0:
+                    _picked    = _pick_all[_manual_idx - 1]
+                    _setup_ppl = round(fuel_price * 100, 1)
+                    _has_live  = _picked.get("diesel_ppl") or _picked.get("petrol_ppl")
+
+                    _mc1, _mc2, _mc3 = st.columns(3)
+                    _manual_ppl = _mc1.number_input(
+                        "Price (pence/L)",
+                        value=float(_has_live or _setup_ppl),
+                        min_value=50.0, max_value=300.0, step=0.1, format="%.1f",
+                        help=("Using live price — edit if incorrect" if _has_live
+                              else f"No live price available — using your Setup rate "
+                                   f"({_setup_ppl:.1f}p/L). Update to today's pump price."),
+                    )
+                    _manual_litres = _mc2.number_input(
+                        "Litres needed",
+                        value=200.0, min_value=10.0, max_value=1000.0, step=10.0,
+                    )
+                    _manual_ftype = _mc3.selectbox(
+                        "Fuel type", ["diesel", "petrol"], index=0,
+                    )
+
+                    _picked_copy = dict(_picked)
+                    _picked_copy["diesel_ppl"] = _manual_ppl
+                    _picked_copy["petrol_ppl"] = _manual_ppl
+                    if "distance_from_centre_km" not in _picked_copy:
+                        _picked_copy["distance_from_centre_km"] = _picked_copy.get("distance_km", 0)
+
+                    _route_wps = result.get("waypoints", [(home_lat, home_lon)])
+                    _scored_manual = score_refuel_stop(
+                        _picked_copy, _route_wps,
+                        litres_needed=_manual_litres,
+                        work_rate_ha_hr=work_rate,
+                        cost_per_ha=cost_per_ha,
+                        avg_speed_kmh=avg_speed,
+                        fuel_type=_manual_ftype,
+                    )
+                    st.session_state["_scored_stations"]         = [_scored_manual]
+                    st.session_state["selected_fuel_station_idx"] = 0
+
+                    _mc4, _mc5, _mc6, _mc7 = st.columns(4)
+                    _mc4.metric("Fill cost",      f"£{_scored_manual['fill_cost']:.2f}")
+                    _mc5.metric("Detour",         f"{_scored_manual['detour_km']:.1f} km")
+                    _mc6.metric("Time lost",      f"{_scored_manual['time_lost_min']:.0f} min")
+                    _mc7.metric("Total ROI cost", f"£{_scored_manual['net_roi_impact']:.2f}")
+
+                    _adj_net = net_margin - _scored_manual["net_roi_impact"]
+                    st.success(
+                        f"**{_picked['brand']}** added to route — "
+                        f"{_scored_manual['detour_km']:.1f} km detour, "
+                        f"{_scored_manual['time_lost_min']:.0f} min lost. "
+                        f"Net margin after fill-up: **£{_adj_net:.2f}**"
+                    )
+                    if not _has_live:
+                        st.caption(
+                            "Price entered manually. Tick **'I need to fill up today'** above "
+                            "to fetch live UK retailer prices."
+                        )
+                else:
+                    # No station chosen — clear any previous manual selection
+                    st.session_state.pop("_scored_stations", None)
+                    st.session_state.pop("selected_fuel_station_idx", None)
+
     # ── Route Map ─────────────────────────────────────────────────────────────
     st.subheader("Route Map")
     try:
@@ -519,7 +634,7 @@ def render(data: dict):
         _scored_map  = st.session_state.get("_scored_stations", [])
         _sel_idx_map = st.session_state.get("selected_fuel_station_idx")
         _map_fuel_stop = None
-        if needs_refuel and _scored_map and _sel_idx_map is not None:
+        if _scored_map and _sel_idx_map is not None:
             _map_fuel_stop = _scored_map[_sel_idx_map]
 
         # ── Build route waypoints, inserting fuel stop if selected
@@ -677,7 +792,7 @@ def render(data: dict):
     _sel_idx_nav = st.session_state.get("selected_fuel_station_idx")
     _scored_nav  = st.session_state.get("_scored_stations", [])
     _fuel_label  = ""
-    if needs_refuel and _scored_nav and _sel_idx_nav is not None:
+    if _scored_nav and _sel_idx_nav is not None:
         _sel_s = _scored_nav[_sel_idx_nav]
         _insert_at = min(_sel_s.get("best_insertion", len(_gm_stops) - 2) + 1,
                          len(_gm_stops) - 1)
