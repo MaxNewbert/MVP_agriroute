@@ -1,6 +1,6 @@
 """Contractor Setup — profile, home base, work rates, costs, equipment."""
 import streamlit as st
-from utils.data_models import save_data, OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS, DEFAULT_FUEL
+from utils.data_models import save_data, OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS, DEFAULT_FUEL, DEFAULT_SETUP_TIMES
 
 
 def _geocode(address: str):
@@ -80,22 +80,37 @@ def render(data: dict):
                 st.success("Profile saved.")
 
     # ── Work Rates ────────────────────────────────────────────────────────────
-    with st.expander("Work Rates & Costs per Operation", expanded=True):
-        st.markdown("Set your **work rate (ha/hr)** and **charge (£/ha)** per operation type.")
+    with st.expander("Work Rates, Costs & Setup Times per Operation", expanded=True):
+        st.markdown(
+            "Set your **work rate (ha/hr)**, **charge (£/ha)**, and "
+            "**setup time (min/field)** per operation type. "
+            "Setup time covers filling the sprayer/drill, pre-work checks, "
+            "getting into the field — added to each field visit in the day plan."
+        )
+        saved_setup = data.get("setup_times", DEFAULT_SETUP_TIMES.copy())
         with st.form("form_rates"):
             cols = st.columns(4)
-            new_rates = {}
-            new_costs = {}
+            new_rates  = {}
+            new_costs  = {}
+            new_setup  = {}
             for i, op in enumerate(OPERATION_TYPES):
                 with cols[i]:
                     st.markdown(f"**{op}**")
                     new_rates[op] = st.number_input(
-                        "ha/hr", value=float(work_rates.get(op, DEFAULT_WORK_RATES[op])),
+                        "Work rate (ha/hr)",
+                        value=float(work_rates.get(op, DEFAULT_WORK_RATES[op])),
                         min_value=0.1, step=0.5, key=f"rate_{op}",
                     )
                     new_costs[op] = st.number_input(
-                        "£/ha",  value=float(costs.get(op, DEFAULT_COSTS[op])),
+                        "Charge (£/ha)",
+                        value=float(costs.get(op, DEFAULT_COSTS[op])),
                         min_value=0.0, step=1.0, key=f"cost_{op}",
+                    )
+                    new_setup[op] = st.number_input(
+                        "Setup time (min/field)",
+                        value=float(saved_setup.get(op, DEFAULT_SETUP_TIMES[op])),
+                        min_value=0.0, max_value=120.0, step=5.0, key=f"setup_{op}",
+                        help=f"Fixed time added per field visit for {op} (filling, checks, etc.)",
                     )
 
             avg_speed = st.number_input(
@@ -117,6 +132,7 @@ def render(data: dict):
             if st.form_submit_button("Save Rates & Settings", type="primary"):
                 data["work_rates"]       = new_rates
                 data["costs"]            = new_costs
+                data["setup_times"]      = new_setup
                 data["avg_speed_kmh"]    = avg_speed
                 data["max_day_hours"]    = max_day_hrs
                 data["default_start_hr"] = start_hr

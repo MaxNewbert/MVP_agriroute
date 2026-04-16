@@ -71,6 +71,14 @@ DEFAULT_COSTS = {
     "Harvest":           75.0,
 }
 
+# ── Default setup times per field visit (minutes) ────────────────────────────
+DEFAULT_SETUP_TIMES = {
+    "Spraying":           30,   # fill tank, mix products, check nozzles
+    "Seeding / Drilling": 20,   # fill hopper, check coulter/disc settings
+    "Fertiliser":         15,   # fill hopper
+    "Harvest":            20,   # pre-work checks, header height, concave settings
+}
+
 # ── Default fuel settings ─────────────────────────────────────────────────────
 DEFAULT_FUEL = {
     "price_per_litre":          1.45,   # £/L — update to current pump price
@@ -145,6 +153,7 @@ def load_data() -> dict:
             "road_litres_per_100km": DEFAULT_FUEL["road_litres_per_100km"],
             "op_litres_per_ha":      DEFAULT_FUEL["op_litres_per_ha"].copy(),
         },
+        "setup_times": DEFAULT_SETUP_TIMES.copy(),
     }
 
 

@@ -3,7 +3,8 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 from utils.data_models import (save_data, calc_priority_score,
-                                OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS, DEFAULT_FUEL)
+                                OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS,
+                                DEFAULT_FUEL, DEFAULT_SETUP_TIMES)
 from utils.routing import build_day_plan, get_osrm_route, haversine_km
 from utils.weather import check_operation_window, THRESHOLDS
 
@@ -56,7 +57,7 @@ def render(data: dict):
             min_value=2.0, max_value=16.0, step=0.5,
         )
 
-        row2 = st.columns([2, 2, 1.5, 1.5])
+        row2 = st.columns([2, 2, 1.5, 1.5, 1.5])
         work_rate = row2[0].number_input(
             "Work rate (ha/hr)",
             value=float(data.get("work_rates", DEFAULT_WORK_RATES).get(op_type, 10)),
@@ -68,12 +69,18 @@ def render(data: dict):
             value=float(data.get("costs", DEFAULT_COSTS).get(op_type, 10)),
             min_value=0.0, step=1.0,
         )
-        avg_speed = row2[2].number_input(
+        setup_time = row2[2].number_input(
+            "Setup time (min/field)",
+            value=float(data.get("setup_times", DEFAULT_SETUP_TIMES).get(op_type, 20)),
+            min_value=0.0, max_value=120.0, step=5.0,
+            help="Fixed time per field: filling tank/hopper, pre-work checks, getting into field",
+        )
+        avg_speed = row2[3].number_input(
             "Road speed (km/h)",
             value=float(data.get("avg_speed_kmh", 50)),
             min_value=10.0, max_value=120.0, step=5.0,
         )
-        min_score = row2[3].slider("Min priority score", 0, 100, 0)
+        min_score = row2[4].slider("Min priority score", 0, 100, 0)
 
     all_fields = _all_fields_flat(farms)
 
@@ -151,6 +158,7 @@ def render(data: dict):
                 start_time_hr=start_hr,
                 max_hours=max_hrs,
                 avg_speed_kmh=avg_speed,
+                setup_time_min=setup_time,
             )
         st.session_state["day_plan"] = result
         st.session_state["day_plan_op"] = op_type
@@ -193,6 +201,36 @@ def render(data: dict):
     m5.metric("Net (after fuel)", f"£{net_margin:,.2f}")
     m6.metric("Finish / Return", f"{result['finish_time']} / {result['return_time']}")
 
+    # ── Over / under day indicator ────────────────────────────────────────────
+    total_travel_min = sum(s["travel_min"] for s in plan)
+    total_setup_min  = sum(s.get("setup_min", 0) for s in plan)
+    total_work_min   = sum(s.get("work_min", 0) for s in plan)
+    total_planned_hr = (total_travel_min + total_setup_min + total_work_min) / 60
+    return_travel_hr = result.get("return_dist_km", 0) / max(avg_speed, 1)
+    total_day_hr     = total_planned_hr + return_travel_hr
+    budget_hr        = max_hrs
+    over_under_hr    = total_day_hr - budget_hr
+
+    ind1, ind2, ind3, ind4 = st.columns(4)
+    ind1.metric("Working time",   f"{total_work_min:.0f} min ({total_work_min/60:.1f} hr)")
+    ind2.metric("Setup time",     f"{total_setup_min:.0f} min")
+    ind3.metric("Travel time",    f"{total_travel_min + return_travel_hr*60:.0f} min")
+    if over_under_hr > 0.25:
+        ind4.metric("Day vs budget", f"+{over_under_hr:.1f} hr OVER",
+                    delta=f"{total_day_hr:.1f} hr of {budget_hr:.1f} hr", delta_color="inverse")
+        st.warning(
+            f"Plan is **{over_under_hr:.1f} hr over** your {budget_hr:.0f}-hour day budget "
+            f"({total_day_hr:.1f} hr total incl. return). Consider removing lower-priority fields."
+        )
+    elif over_under_hr < -0.5:
+        ind4.metric("Day vs budget", f"{abs(over_under_hr):.1f} hr spare",
+                    delta=f"{total_day_hr:.1f} hr of {budget_hr:.1f} hr", delta_color="normal")
+        st.info(f"Plan uses {total_day_hr:.1f} hr — **{abs(over_under_hr):.1f} hr spare** in your {budget_hr:.0f}-hour day.")
+    else:
+        ind4.metric("Day vs budget", "On track",
+                    delta=f"{total_day_hr:.1f} hr of {budget_hr:.1f} hr", delta_color="normal")
+        st.success(f"Plan fits well within your {budget_hr:.0f}-hour day ({total_day_hr:.1f} hr total).")
+
     # Fuel breakdown
     with st.expander("Fuel Breakdown", expanded=False):
         fb1, fb2, fb3, fb4 = st.columns(4)
@@ -211,6 +249,8 @@ def render(data: dict):
         stop_road_l    = stop["distance_km"] * road_l100 / 100
         stop_op_l      = stop["hectares"] * op_lpha
         stop_fuel_cost = (stop_road_l + stop_op_l) * fuel_price
+        s_min  = stop.get("setup_min", 0)
+        w_min  = stop.get("work_min", round(stop["hectares"] / work_rate * 60, 0))
         plan_rows.append({
             "#":            i,
             "Farm":         stop["farm_name"],
@@ -219,7 +259,10 @@ def render(data: dict):
             "Ha":           stop["hectares"],
             "Priority":     stop["priority_score"],
             "Travel":       f"{stop['travel_min']} min ({stop['distance_km']} km)",
+            "Setup":        f"{s_min:.0f} min",
+            "Work":         f"{w_min:.0f} min",
             "Arrive":       stop["arrive_time"],
+            "Work Start":   stop.get("work_start_time", stop["arrive_time"]),
             "Finish":       stop["finish_time"],
             "Revenue":      f"£{stop['revenue']:,.2f}",
             "Travel Fuel":  f"{stop_road_l:.1f} L",

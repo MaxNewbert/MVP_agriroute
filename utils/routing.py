@@ -124,9 +124,11 @@ def build_day_plan(home_lat: float, home_lon: float,
                    cost_per_ha: float,
                    start_time_hr: float = 7.0,
                    max_hours: float = 10.0,
-                   avg_speed_kmh: float = 50.0) -> dict:
+                   avg_speed_kmh: float = 50.0,
+                   setup_time_min: float = 0.0) -> dict:
     """
     Build optimised day plan.
+    setup_time_min: fixed time added per field visit (filling, checks etc.)
     Returns ordered field list with timings, travel, ROI + all waypoints for map.
     """
     home = (home_lat, home_lon)
@@ -150,8 +152,12 @@ def build_day_plan(home_lat: float, home_lon: float,
         work_hr  = f["hectares"] / work_rate_ha_hr
         work_min = work_hr * 60
 
-        if hour + (travel_min + work_min) / 60 > start_time_hr + max_hours:
-            available_hr = (start_time_hr + max_hours) - hour - (travel_min / 60)
+        # Total time needed for this stop: travel + setup + fieldwork
+        total_stop_hr = (travel_min + setup_time_min + work_min) / 60
+
+        if hour + total_stop_hr > start_time_hr + max_hours:
+            # How much working time is actually left after travel + setup?
+            available_hr = (start_time_hr + max_hours) - hour - (travel_min + setup_time_min) / 60
             if available_hr <= 0:
                 break
             ha_possible = min(available_hr * work_rate_ha_hr, f["hectares"])
@@ -160,27 +166,31 @@ def build_day_plan(home_lat: float, home_lon: float,
             ha_possible = f["hectares"]
             partial     = False
 
-        revenue   = ha_possible * cost_per_ha
-        arrive_hr = hour + travel_min / 60
-        finish_hr = arrive_hr + ha_possible / work_rate_ha_hr
+        revenue       = ha_possible * cost_per_ha
+        arrive_hr     = hour + travel_min / 60
+        work_start_hr = arrive_hr + setup_time_min / 60
+        finish_hr     = work_start_hr + ha_possible / work_rate_ha_hr
 
         plan.append({
-            "field_id":       f.get("id", ""),
-            "farm_id":        f.get("farm_id", ""),
-            "field_name":     f["name"],
-            "farm_name":      f.get("farm_name", ""),
-            "crop_type":      f.get("crop_type", ""),
-            "bbch_stage":     f.get("bbch_stage", 0),
-            "hectares":       round(ha_possible, 1),
-            "full_field":     not partial,
-            "priority_score": round(f.get("_priority_score", 0), 1),
-            "distance_km":    round(dist_km, 1),
-            "travel_min":     round(travel_min),
-            "arrive_time":    _hr_to_hhmm(arrive_hr),
-            "finish_time":    _hr_to_hhmm(finish_hr),
-            "revenue":        round(revenue, 2),
-            "lat":            f["lat"],
-            "lon":            f["lon"],
+            "field_id":        f.get("id", ""),
+            "farm_id":         f.get("farm_id", ""),
+            "field_name":      f["name"],
+            "farm_name":       f.get("farm_name", ""),
+            "crop_type":       f.get("crop_type", ""),
+            "bbch_stage":      f.get("bbch_stage", 0),
+            "hectares":        round(ha_possible, 1),
+            "full_field":      not partial,
+            "priority_score":  round(f.get("_priority_score", 0), 1),
+            "distance_km":     round(dist_km, 1),
+            "travel_min":      round(travel_min),
+            "setup_min":       round(setup_time_min),
+            "work_min":        round(ha_possible / work_rate_ha_hr * 60),
+            "arrive_time":     _hr_to_hhmm(arrive_hr),
+            "work_start_time": _hr_to_hhmm(work_start_hr),
+            "finish_time":     _hr_to_hhmm(finish_hr),
+            "revenue":         round(revenue, 2),
+            "lat":             f["lat"],
+            "lon":             f["lon"],
         })
 
         total_ha  += ha_possible
