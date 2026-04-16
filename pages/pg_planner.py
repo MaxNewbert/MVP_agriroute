@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 from utils.data_models import (save_data, calc_priority_score,
-                                OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS)
+                                OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS, DEFAULT_FUEL)
 from utils.routing import build_day_plan, get_osrm_route, haversine_km
 from utils.weather import check_operation_window, THRESHOLDS
 
@@ -166,28 +166,67 @@ def render(data: dict):
     st.markdown("---")
     st.subheader(f"Day Plan — {op_label} — {st.session_state.get('plan_date', date_str)}")
 
+    # ── Fuel calculations ─────────────────────────────────────────────────────
+    fuel_cfg      = data.get("fuel", {})
+    fuel_price    = float(fuel_cfg.get("price_per_litre",       DEFAULT_FUEL["price_per_litre"]))
+    road_l100     = float(fuel_cfg.get("road_litres_per_100km", DEFAULT_FUEL["road_litres_per_100km"]))
+    op_lpha       = float(fuel_cfg.get("op_litres_per_ha", {}).get(
+                        op_label, DEFAULT_FUEL["op_litres_per_ha"].get(op_label, 10.0)))
+
+    total_road_km   = sum(s["distance_km"] for s in plan) + result.get("return_dist_km", 0)
+    total_road_l    = total_road_km * road_l100 / 100
+    total_road_cost = total_road_l * fuel_price
+
+    total_op_l      = result["total_ha"] * op_lpha
+    total_op_cost   = total_op_l * fuel_price
+
+    total_fuel_cost = total_road_cost + total_op_cost
+    net_margin      = result["total_revenue"] - total_fuel_cost
+
     # Summary metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Fields", result["fields_count"])
-    m2.metric("Total Ha", f"{result['total_ha']} ha")
-    m3.metric("Revenue", f"£{result['total_revenue']:,.2f}")
-    m4.metric("Finish / Return", f"{result['finish_time']} / {result['return_time']}")
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Fields",          result["fields_count"])
+    m2.metric("Total Ha",        f"{result['total_ha']} ha")
+    m3.metric("Revenue",         f"£{result['total_revenue']:,.2f}")
+    m4.metric("Fuel Cost",       f"£{total_fuel_cost:,.2f}",
+              delta=f"-£{total_fuel_cost:,.2f}", delta_color="inverse")
+    m5.metric("Net (after fuel)", f"£{net_margin:,.2f}")
+    m6.metric("Finish / Return", f"{result['finish_time']} / {result['return_time']}")
+
+    # Fuel breakdown
+    with st.expander("Fuel Breakdown", expanded=False):
+        fb1, fb2, fb3, fb4 = st.columns(4)
+        fb1.metric("Road distance",      f"{total_road_km:.1f} km")
+        fb2.metric("Road fuel",          f"{total_road_l:.1f} L  (£{total_road_cost:.2f})")
+        fb3.metric("In-field fuel",      f"{total_op_l:.1f} L  (£{total_op_cost:.2f})")
+        fb4.metric("Fuel price used",    f"£{fuel_price:.2f}/L")
+        st.caption(
+            f"Road: {road_l100} L/100km | In-field ({op_label}): {op_lpha} L/ha — "
+            f"update rates in **Contractor Setup → Fuel & Running Costs**"
+        )
 
     # Detailed schedule table
     plan_rows = []
     for i, stop in enumerate(plan, 1):
+        stop_road_l    = stop["distance_km"] * road_l100 / 100
+        stop_op_l      = stop["hectares"] * op_lpha
+        stop_fuel_cost = (stop_road_l + stop_op_l) * fuel_price
         plan_rows.append({
-            "#":        i,
-            "Farm":     stop["farm_name"],
-            "Field":    stop["field_name"],
-            "Crop":     stop["crop_type"],
-            "Ha":       stop["hectares"],
-            "Priority": stop["priority_score"],
-            "Travel":   f"{stop['travel_min']} min ({stop['distance_km']} km)",
-            "Arrive":   stop["arrive_time"],
-            "Finish":   stop["finish_time"],
-            "Revenue":  f"£{stop['revenue']:,.2f}",
-            "Full":     "Yes" if stop["full_field"] else "Partial",
+            "#":            i,
+            "Farm":         stop["farm_name"],
+            "Field":        stop["field_name"],
+            "Crop":         stop["crop_type"],
+            "Ha":           stop["hectares"],
+            "Priority":     stop["priority_score"],
+            "Travel":       f"{stop['travel_min']} min ({stop['distance_km']} km)",
+            "Arrive":       stop["arrive_time"],
+            "Finish":       stop["finish_time"],
+            "Revenue":      f"£{stop['revenue']:,.2f}",
+            "Travel Fuel":  f"{stop_road_l:.1f} L",
+            "Field Fuel":   f"{stop_op_l:.1f} L",
+            "Fuel Cost":    f"£{stop_fuel_cost:.2f}",
+            "Net":          f"£{stop['revenue'] - stop_fuel_cost:,.2f}",
+            "Full":         "Yes" if stop["full_field"] else "Partial",
         })
 
     df_plan = pd.DataFrame(plan_rows)

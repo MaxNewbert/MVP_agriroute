@@ -71,6 +71,18 @@ DEFAULT_COSTS = {
     "Harvest":           75.0,
 }
 
+# ── Default fuel settings ─────────────────────────────────────────────────────
+DEFAULT_FUEL = {
+    "price_per_litre":          1.45,   # £/L — update to current pump price
+    "road_litres_per_100km":   35.0,   # vehicle/tractor travelling between fields
+    "op_litres_per_ha": {
+        "Spraying":          4.0,   # self-propelled or tractor + sprayer
+        "Seeding / Drilling": 16.0,
+        "Fertiliser":         6.0,
+        "Harvest":           28.0,
+    },
+}
+
 
 # ── Priority scoring ──────────────────────────────────────────────────────────
 def calc_priority_score(field: dict, operation: str) -> float:
@@ -128,6 +140,11 @@ def load_data() -> dict:
         "operations_log": [],
         "work_rates": DEFAULT_WORK_RATES.copy(),
         "costs": DEFAULT_COSTS.copy(),
+        "fuel": {
+            "price_per_litre":       DEFAULT_FUEL["price_per_litre"],
+            "road_litres_per_100km": DEFAULT_FUEL["road_litres_per_100km"],
+            "op_litres_per_ha":      DEFAULT_FUEL["op_litres_per_ha"].copy(),
+        },
     }
 
 

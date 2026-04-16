@@ -1,6 +1,6 @@
 """Contractor Setup — profile, home base, work rates, costs, equipment."""
 import streamlit as st
-from utils.data_models import save_data, OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS
+from utils.data_models import save_data, OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS, DEFAULT_FUEL
 
 
 def _geocode(address: str):
@@ -122,6 +122,65 @@ def render(data: dict):
                 data["default_start_hr"] = start_hr
                 save_data(data)
                 st.success("Rates & settings saved.")
+
+    # ── Fuel & Running Costs ──────────────────────────────────────────────────
+    with st.expander("Fuel & Running Costs", expanded=False):
+        st.markdown(
+            "Set your current fuel price and consumption rates. These are used in the "
+            "Day Planner to calculate fuel costs for road travel between fields and "
+            "for in-field operations, feeding into your ROI."
+        )
+        fuel = data.get("fuel", {})
+
+        with st.form("form_fuel"):
+            fc1, fc2 = st.columns(2)
+            fuel_price = fc1.number_input(
+                "Fuel price (£/litre)",
+                value=float(fuel.get("price_per_litre", DEFAULT_FUEL["price_per_litre"])),
+                min_value=0.50, max_value=5.00, step=0.01, format="%.2f",
+                help="Update this regularly to match current pump prices",
+            )
+            road_consumption = fc2.number_input(
+                "Road fuel use (L/100 km)",
+                value=float(fuel.get("road_litres_per_100km", DEFAULT_FUEL["road_litres_per_100km"])),
+                min_value=1.0, max_value=100.0, step=0.5,
+                help="Fuel consumption of your vehicle/tractor travelling between fields on the road",
+            )
+
+            st.markdown("**In-field fuel consumption (L/ha) per operation**")
+            st.caption("Covers engine hours while working in the field, not road travel.")
+            op_cols = st.columns(4)
+            op_fuel_in = {}
+            op_defaults = DEFAULT_FUEL["op_litres_per_ha"]
+            saved_op_fuel = fuel.get("op_litres_per_ha", {})
+            for i, op in enumerate(OPERATION_TYPES):
+                op_fuel_in[op] = op_cols[i].number_input(
+                    op,
+                    value=float(saved_op_fuel.get(op, op_defaults.get(op, 10.0))),
+                    min_value=0.0, max_value=200.0, step=0.5,
+                    key=f"fuel_op_{op}",
+                )
+
+            if st.form_submit_button("Save Fuel Settings", type="primary"):
+                data["fuel"] = {
+                    "price_per_litre":       fuel_price,
+                    "road_litres_per_100km": road_consumption,
+                    "op_litres_per_ha":      op_fuel_in,
+                }
+                save_data(data)
+                st.success("Fuel settings saved.")
+
+        # Live cost preview
+        fuel_now = data.get("fuel", {})
+        if fuel_now.get("price_per_litre"):
+            st.markdown("**Cost preview at current price:**")
+            price = fuel_now["price_per_litre"]
+            road  = fuel_now.get("road_litres_per_100km", DEFAULT_FUEL["road_litres_per_100km"])
+            prev_cols = st.columns(5)
+            prev_cols[0].metric("Road (per 10 km)", f"£{road * 10/100 * price:.2f}")
+            for i, op in enumerate(OPERATION_TYPES):
+                lpha = fuel_now.get("op_litres_per_ha", {}).get(op, DEFAULT_FUEL["op_litres_per_ha"][op])
+                prev_cols[i+1].metric(f"{op} (per ha)", f"£{lpha * price:.2f}")
 
     # ── Equipment Register ────────────────────────────────────────────────────
     with st.expander("Equipment Register"):

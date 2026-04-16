@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from collections import defaultdict
-from utils.data_models import OPERATION_TYPES, DEFAULT_COSTS, DEFAULT_WORK_RATES
+from utils.data_models import OPERATION_TYPES, DEFAULT_COSTS, DEFAULT_WORK_RATES, DEFAULT_FUEL
 
 
 def render(data: dict):
@@ -105,22 +105,59 @@ def render(data: dict):
     # ── Profitability estimate ─────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Profitability Estimate")
-    st.markdown("Enter your estimated cost per ha per operation to see profit margin.")
+    st.markdown("Costs pulled from your setup (fuel auto-calculated). Override any value below.")
 
-    with st.expander("Set Cost Inputs"):
+    fuel_cfg   = data.get("fuel", {})
+    fuel_price = float(fuel_cfg.get("price_per_litre",       DEFAULT_FUEL["price_per_litre"]))
+    road_l100  = float(fuel_cfg.get("road_litres_per_100km", DEFAULT_FUEL["road_litres_per_100km"]))
+    op_fuel    = fuel_cfg.get("op_litres_per_ha",            DEFAULT_FUEL["op_litres_per_ha"])
+
+    # Estimate avg travel distance per job from log (or default 15 km round trip)
+    avg_travel_km = 15.0
+    if len(ops_log) > 0:
+        # Use a rough 15 km default — planner stores distance per stop but log doesn't yet
+        avg_travel_km = 15.0
+
+    with st.expander("Cost Inputs (edit to override)", expanded=True):
         with st.form("cost_inputs"):
+            st.markdown("**Other costs per ha (labour, machinery depreciation, etc.)**")
             input_cols = st.columns(4)
-            op_costs_in = {}
+            op_other_costs = {}
             for i, op in enumerate(OPERATION_TYPES):
-                op_costs_in[op] = input_cols[i].number_input(
-                    f"{op} (£/ha cost)",
-                    value=float(costs.get(op, DEFAULT_COSTS[op])) * 0.6,
-                    min_value=0.0, step=1.0, key=f"input_cost_{op}",
+                op_other_costs[op] = input_cols[i].number_input(
+                    f"{op} other (£/ha)",
+                    value=float(costs.get(op, DEFAULT_COSTS[op])) * 0.5,
+                    min_value=0.0, step=1.0, key=f"other_cost_{op}",
                 )
-            if st.form_submit_button("Calculate"):
-                st.session_state["profit_costs"] = op_costs_in
 
-    pc = st.session_state.get("profit_costs", {op: costs.get(op, DEFAULT_COSTS[op]) * 0.6 for op in OPERATION_TYPES})
+            st.markdown("**Fuel settings** (pulled from Contractor Setup)")
+            fc1, fc2, fc3 = st.columns(3)
+            fp_in  = fc1.number_input("Fuel price (£/L)", value=fuel_price,
+                                       min_value=0.5, step=0.01, format="%.2f")
+            rl_in  = fc2.number_input("Road use (L/100km)", value=road_l100,
+                                       min_value=1.0, step=0.5)
+            at_in  = fc3.number_input("Avg travel per job (km)", value=avg_travel_km,
+                                       min_value=0.0, step=1.0,
+                                       help="Average total road km per completed job (to/from field)")
+
+            if st.form_submit_button("Calculate", type="primary"):
+                st.session_state["roi_inputs"] = {
+                    "other_costs": op_other_costs,
+                    "fuel_price":  fp_in,
+                    "road_l100":   rl_in,
+                    "avg_travel":  at_in,
+                }
+
+    saved = st.session_state.get("roi_inputs", {
+        "other_costs": {op: costs.get(op, DEFAULT_COSTS[op]) * 0.5 for op in OPERATION_TYPES},
+        "fuel_price":  fuel_price,
+        "road_l100":   road_l100,
+        "avg_travel":  avg_travel_km,
+    })
+    pc        = saved["other_costs"]
+    s_fp      = saved["fuel_price"]
+    s_rl      = saved["road_l100"]
+    s_travel  = saved["avg_travel"]
 
     profit_rows = []
     for op in OPERATION_TYPES:
@@ -129,16 +166,46 @@ def render(data: dict):
             continue
         rev    = sub["revenue"].sum()
         ha_op  = sub["hectares"].sum()
-        cost_t = ha_op * pc.get(op, 0)
-        profit = rev - cost_t
-        margin = (profit / rev * 100) if rev > 0 else 0
+        jobs   = len(sub)
+
+        # Fuel costs
+        road_fuel_cost = jobs * s_travel * s_rl / 100 * s_fp
+        op_lpha        = float(op_fuel.get(op, DEFAULT_FUEL["op_litres_per_ha"].get(op, 10)))
+        field_fuel_cost = ha_op * op_lpha * s_fp
+        total_fuel     = road_fuel_cost + field_fuel_cost
+
+        # Other costs
+        other_cost = ha_op * pc.get(op, 0)
+
+        total_cost = total_fuel + other_cost
+        profit     = rev - total_cost
+        margin     = (profit / rev * 100) if rev > 0 else 0
+
         profit_rows.append({
-            "Operation":   op,
-            "Revenue (£)": round(rev, 2),
-            "Cost (£)":    round(cost_t, 2),
-            "Profit (£)":  round(profit, 2),
-            "Margin %":    round(margin, 1),
+            "Operation":       op,
+            "Jobs":            jobs,
+            "Ha":              round(ha_op, 1),
+            "Revenue (£)":     round(rev, 2),
+            "Fuel Cost (£)":   round(total_fuel, 2),
+            "Other Cost (£)":  round(other_cost, 2),
+            "Total Cost (£)":  round(total_cost, 2),
+            "Profit (£)":      round(profit, 2),
+            "Margin %":        round(margin, 1),
         })
+
+    # Fuel summary card
+    if profit_rows:
+        total_fuel_all  = sum(r["Fuel Cost (£)"] for r in profit_rows)
+        total_other_all = sum(r["Other Cost (£)"] for r in profit_rows)
+        total_rev_all   = sum(r["Revenue (£)"] for r in profit_rows)
+        total_profit    = total_rev_all - total_fuel_all - total_other_all
+        fs1, fs2, fs3, fs4 = st.columns(4)
+        fs1.metric("Total Revenue",    f"£{total_rev_all:,.2f}")
+        fs2.metric("Total Fuel Cost",  f"£{total_fuel_all:,.2f}",
+                   delta=f"£{total_fuel_all/total_rev_all*100:.1f}% of revenue" if total_rev_all else None,
+                   delta_color="inverse")
+        fs3.metric("Other Costs",      f"£{total_other_all:,.2f}")
+        fs4.metric("Net Profit",       f"£{total_profit:,.2f}")
 
     if profit_rows:
         pdf = pd.DataFrame(profit_rows)
