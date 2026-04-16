@@ -62,24 +62,49 @@ def render(data: dict):
     st.subheader("3. Products Applied")
     st.markdown("Add one row per product.")
 
+    field_ha = float(field.get("hectares", 0))
+
     if "report_products" not in st.session_state:
         st.session_state.report_products = [{"name": "", "mapp_no": "", "rate": "", "unit": "L/ha", "total_used": ""}]
+
+    st.caption(f"Total Used is calculated automatically from Rate × {field_ha} ha. Edit the value if actual usage differed.")
 
     products = st.session_state.report_products
     updated_products = []
     for i, prod in enumerate(products):
         pc1, pc2, pc3, pc4, pc5, pc6 = st.columns([3, 2, 1.5, 1.5, 1.5, 0.8])
-        name       = pc1.text_input("Product",    value=prod["name"],      key=f"p_name_{i}")
-        mapp       = pc2.text_input("MAPP No.",   value=prod["mapp_no"],   key=f"p_mapp_{i}")
-        rate       = pc3.text_input("Rate",       value=str(prod["rate"]), key=f"p_rate_{i}")
-        unit       = pc4.selectbox("Unit", ["L/ha","kg/ha","g/ha","t/ha","units/ha"],
-                                    index=["L/ha","kg/ha","g/ha","t/ha","units/ha"].index(prod.get("unit","L/ha")),
-                                    key=f"p_unit_{i}")
-        total_used = pc5.text_input("Total Used", value=str(prod["total_used"]), key=f"p_total_{i}")
+        name = pc1.text_input("Product",  value=prod["name"],      key=f"p_name_{i}")
+        mapp = pc2.text_input("MAPP No.", value=prod["mapp_no"],   key=f"p_mapp_{i}")
+        rate = pc3.text_input("Rate",     value=str(prod["rate"]), key=f"p_rate_{i}")
+        unit = pc4.selectbox("Unit", ["L/ha","kg/ha","g/ha","t/ha","units/ha"],
+                              index=["L/ha","kg/ha","g/ha","t/ha","units/ha"].index(prod.get("unit","L/ha")),
+                              key=f"p_unit_{i}")
+
+        # Auto-calculate total unless the user has already overridden it
+        try:
+            auto_total = round(float(rate) * field_ha, 2)
+            auto_str   = str(auto_total)
+        except (ValueError, TypeError):
+            auto_str   = ""
+
+        # Use stored override if it differs from the last auto value, else use auto
+        stored = str(prod.get("total_used", ""))
+        display_total = stored if stored and stored != prod.get("_auto_total", "") else auto_str
+
+        total_used = pc5.text_input(
+            f"Total Used ({unit.split('/')[0]})",
+            value=display_total,
+            key=f"p_total_{i}",
+        )
+
         if pc6.button("🗑", key=f"del_prod_{i}", help="Remove") and len(products) > 1:
             st.session_state.report_products.pop(i)
             st.rerun()
-        updated_products.append({"name": name, "mapp_no": mapp, "rate": rate, "unit": unit, "total_used": total_used})
+
+        updated_products.append({
+            "name": name, "mapp_no": mapp, "rate": rate, "unit": unit,
+            "total_used": total_used, "_auto_total": auto_str,
+        })
 
     st.session_state.report_products = updated_products
 
@@ -250,7 +275,8 @@ def render(data: dict):
                 "operator_name":      operator,
                 "equipment":          equip_sel,
                 "gps_system":         gps,
-                "products":           [p for p in st.session_state.report_products if p["name"]],
+                "products":           [{k: v for k, v in p.items() if k != "_auto_total"}
+                                       for p in st.session_state.report_products if p["name"]],
                 "application": {
                     "nozzle":            nozzle,
                     "pressure_bar":      pressure,
@@ -291,7 +317,8 @@ def render(data: dict):
                 operator=operator,
                 hectares=field.get("hectares", 0),
                 revenue=field.get("hectares", 0) * data.get("costs", DEFAULT_COSTS).get(op_type, 0),
-                products=[p for p in st.session_state.report_products if p["name"]],
+                products=[{k: v for k, v in p.items() if k != "_auto_total"}
+                          for p in st.session_state.report_products if p["name"]],
                 application={"nozzle": nozzle, "pressure_bar": pressure,
                              "forward_speed_kph": fwd_speed, "water_vol_lha": water_vol},
                 weather={"wind_ms": wind_ms, "wind_mph": wind_mph, "wind_dir": wind_dir,
