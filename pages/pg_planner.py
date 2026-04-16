@@ -271,17 +271,30 @@ def render(data: dict):
 
     total_all_costs  = total_fuel_cost + total_equip_cost + total_overhead + total_op_wage
     net_margin       = result["total_revenue"] - total_fuel_cost          # fuel-only (legacy)
+
+    # ── Include confirmed fuel stop fill cost from previous render (session state) ──
+    _prev_scored  = st.session_state.get("_scored_stations", [])
+    _prev_fs_idx  = st.session_state.get("selected_fuel_station_idx")
+    fuel_stop_fill_cost = 0.0
+    _confirmed_stop = None
+    if _prev_scored and _prev_fs_idx is not None and 0 <= _prev_fs_idx < len(_prev_scored):
+        _confirmed_stop     = _prev_scored[_prev_fs_idx]
+        fuel_stop_fill_cost = _confirmed_stop.get("fill_cost", 0.0)
+        total_all_costs    += fuel_stop_fill_cost
+
     real_net_margin  = result["total_revenue"] - total_all_costs
 
     # Summary metrics
+    _fs_label = f" + fuel stop (£{fuel_stop_fill_cost:.2f})" if fuel_stop_fill_cost else ""
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Fields",           result["fields_count"])
     m2.metric("Total Ha",         f"{result['total_ha']} ha")
     m3.metric("Revenue",          f"£{result['total_revenue']:,.2f}")
     m4.metric("Total Costs",      f"£{total_all_costs:,.2f}",
-              delta=f"-£{total_all_costs:,.2f}", delta_color="inverse")
+              delta=f"-£{total_all_costs:,.2f}" + _fs_label, delta_color="inverse")
     m5.metric("Real Net Margin",  f"£{real_net_margin:,.2f}",
-              help="Revenue minus fuel + equipment depreciation + overheads + operator cost")
+              help="Revenue minus fuel + equipment depreciation + overheads + operator cost"
+                   + (f" + {_confirmed_stop['brand']} fill-up" if _confirmed_stop else ""))
     m6.metric("Finish / Return",  f"{result['finish_time']} / {result['return_time']}")
 
     # ── Over / under day indicator ────────────────────────────────────────────
@@ -1037,30 +1050,39 @@ def render(data: dict):
     st.subheader("Mark Operations as Complete")
     st.markdown("After completing a field, mark it done to update the operations log.")
 
+    # Build lookup of field IDs already logged for this operation + date
+    _plan_date_str = st.session_state.get("plan_date", date_str)
+    _already_logged = {
+        entry["field_id"]
+        for entry in data.get("operations_log", [])
+        if entry.get("operation") == op_label and entry.get("date") == _plan_date_str
+    }
+
+    from utils.data_models import new_operation_log
     for stop in plan:
         col_a, col_b = st.columns([4, 1])
         col_a.markdown(f"**{stop['field_name']}** ({stop['farm_name']}) — {stop['hectares']} ha")
-        if col_b.button("Mark Done", key=f"done_{stop['field_id']}"):
-            from utils.data_models import new_operation_log
-            log_entry = new_operation_log(
-                farm_id=stop["farm_id"], field_id=stop["field_id"],
-                farm_name=stop["farm_name"], field_name=stop["field_name"],
-                operation=op_label,
-                date=st.session_state.get("plan_date", date_str),
-                operator=contractor.get("operators", [""])[0],
-                hectares=stop["hectares"],
-                revenue=stop["revenue"],
-                equipment=(selected_machine_name
-                           if selected_machine_name != "All machines (combined cost)"
-                           else ", ".join(e["name"] for e in equip_register) or ""),
-            )
-            data.setdefault("operations_log", []).append(log_entry)
-            # Update days_since_last_op
-            fid   = stop["field_id"]
-            fmid  = stop["farm_id"]
-            if fmid in data["farms"] and fid in data["farms"][fmid]["fields"]:
-                data["farms"][fmid]["fields"][fid]["days_since_last_op"][op_label] = 0
-                data["farms"][fmid]["fields"][fid]["completed_operations"].append(log_entry["id"])
-            save_data(data)
-            st.success(f"{stop['field_name']} marked as complete.")
-            st.rerun()
+        if stop["field_id"] in _already_logged:
+            col_b.success("✓ Done")
+        else:
+            if col_b.button("Mark Done", key=f"done_{stop['field_id']}"):
+                log_entry = new_operation_log(
+                    farm_id=stop["farm_id"], field_id=stop["field_id"],
+                    farm_name=stop["farm_name"], field_name=stop["field_name"],
+                    operation=op_label,
+                    date=_plan_date_str,
+                    operator=contractor.get("operators", [""])[0],
+                    hectares=stop["hectares"],
+                    revenue=stop["revenue"],
+                    equipment=(selected_machine_name
+                               if selected_machine_name != "All machines (combined cost)"
+                               else ", ".join(e["name"] for e in equip_register) or ""),
+                )
+                data.setdefault("operations_log", []).append(log_entry)
+                fid  = stop["field_id"]
+                fmid = stop["farm_id"]
+                if fmid in data["farms"] and fid in data["farms"][fmid]["fields"]:
+                    data["farms"][fmid]["fields"][fid]["days_since_last_op"][op_label] = 0
+                    data["farms"][fmid]["fields"][fid]["completed_operations"].append(log_entry["id"])
+                save_data(data)
+                st.rerun()
