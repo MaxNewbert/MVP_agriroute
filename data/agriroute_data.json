@@ -254,7 +254,8 @@
             "Harvest": 999
           },
           "completed_operations": [
-            "op_20260416174624860202"
+            "op_20260416174624860202",
+            "op_20260416205715403270"
           ],
           "files": [],
           "created": "2026-04-16T17:40:20.020845"
@@ -278,7 +279,8 @@
             "Harvest": 999
           },
           "completed_operations": [
-            "op_20260416174626861248"
+            "op_20260416174626861248",
+            "op_20260416205717788547"
           ],
           "files": [],
           "created": "2026-04-16T17:42:08.823606"
@@ -364,6 +366,50 @@
       "notes": "",
       "justification": {},
       "created": "2026-04-16T17:46:26.861248"
+    },
+    {
+      "id": "op_20260416205715403270",
+      "farm_id": "farm_20260416170731292692",
+      "field_id": "field_20260416174020020845",
+      "farm_name": "Hall Estates",
+      "field_name": "Top Field",
+      "operation": "Spraying",
+      "date": "2026-04-18",
+      "operator": "Max Newbert",
+      "hectares": 10.0,
+      "revenue": 80.0,
+      "products": [],
+      "application": {},
+      "weather": {},
+      "weather_warnings": [],
+      "buffer_zones": [],
+      "equipment": "JD 332M Self-Propelled Sprayer, Amazone ZA-V/ZA-TS Fert dual disc spreader, Sumo DD 6 Trailed, LEXION 6000 Claas Combine",
+      "gps_system": "",
+      "notes": "",
+      "justification": {},
+      "created": "2026-04-16T20:57:15.403270"
+    },
+    {
+      "id": "op_20260416205717788547",
+      "farm_id": "farm_20260416170731292692",
+      "field_id": "field_20260416174208823606",
+      "farm_name": "Hall Estates",
+      "field_name": "Bottom Field",
+      "operation": "Spraying",
+      "date": "2026-04-18",
+      "operator": "Max Newbert",
+      "hectares": 36.0,
+      "revenue": 288.0,
+      "products": [],
+      "application": {},
+      "weather": {},
+      "weather_warnings": [],
+      "buffer_zones": [],
+      "equipment": "JD 332M Self-Propelled Sprayer, Amazone ZA-V/ZA-TS Fert dual disc spreader, Sumo DD 6 Trailed, LEXION 6000 Claas Combine",
+      "gps_system": "",
+      "notes": "",
+      "justification": {},
+      "created": "2026-04-16T20:57:17.788547"
     }
   ],
   "work_rates": {
@@ -373,7 +419,7 @@
     "Harvest": 6.0
   },
   "costs": {
-    "Spraying": 8.0,
+    "Spraying": 16.0,
     "Seeding / Drilling": 35.0,
     "Fertiliser": 12.0,
     "Harvest": 75.0
@@ -455,5 +501,11 @@
       "phone": "+447484044375",
       "notes": "20061186 - BASIS registered"
     }
-  ]
+  ],
+  "setup_times": {
+    "Spraying": 30.0,
+    "Seeding / Drilling": 20.0,
+    "Fertiliser": 15.0,
+    "Harvest": 20.0
+  }
 }

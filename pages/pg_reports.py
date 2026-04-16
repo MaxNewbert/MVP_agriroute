@@ -87,13 +87,17 @@ def render(data: dict):
         except (ValueError, TypeError):
             auto_str   = ""
 
-        # Use stored override if it differs from the last auto value, else use auto
+        # Detect whether the stored value is a user override (differs from last auto)
         stored = str(prod.get("total_used", ""))
-        display_total = stored if stored and stored != prod.get("_auto_total", "") else auto_str
+        is_user_override = stored and stored != prod.get("_auto_total", "")
+
+        # Force the widget state to the auto value when not overridden.
+        # (Streamlit ignores value= on re-renders, so we must write to session state directly.)
+        if not is_user_override:
+            st.session_state[f"p_total_{i}"] = auto_str
 
         total_used = pc5.text_input(
             f"Total Used ({unit.split('/')[0]})",
-            value=display_total,
             key=f"p_total_{i}",
         )
 
