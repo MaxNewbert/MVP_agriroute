@@ -7,6 +7,13 @@ from utils.data_models import (save_data, calc_priority_score,
                                 DEFAULT_FUEL, DEFAULT_SETUP_TIMES)
 from utils.routing import build_day_plan, get_osrm_route, haversine_km
 from utils.weather import check_operation_window, THRESHOLDS
+from utils.fuel_prices import fetch_stations_near, score_refuel_stop
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_fuel_prices(lat: float, lon: float, radius_km: float, fuel_type: str) -> dict:
+    """Cached wrapper — prices refreshed at most every 30 minutes."""
+    return fetch_stations_near(lat, lon, radius_km=radius_km, fuel_type=fuel_type)
 
 
 def _all_fields_flat(farms: dict) -> list:
@@ -274,6 +281,190 @@ def render(data: dict):
 
     df_plan = pd.DataFrame(plan_rows)
     st.dataframe(df_plan, use_container_width=True, hide_index=True)
+
+    # ── Refuel on Route ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Refuel on Route?")
+
+    needs_refuel = st.checkbox("I need to fill up today", value=False,
+                               help="Find the best fuel station on your route based on price vs detour cost")
+
+    if needs_refuel:
+        rf1, rf2, rf3 = st.columns(3)
+        litres_needed = rf1.number_input(
+            "Litres needed",
+            value=200.0, min_value=10.0, max_value=1000.0, step=10.0,
+            help="How many litres do you need to fill up?",
+        )
+        fuel_type = rf2.selectbox(
+            "Fuel type",
+            ["diesel", "petrol"],
+            index=0,
+            help="Diesel (B7) for most agricultural vehicles",
+        )
+        search_radius = rf3.number_input(
+            "Search radius (km)",
+            value=25.0, min_value=5.0, max_value=60.0, step=5.0,
+            help="How far from your route centre to search for stations",
+        )
+
+        # Route centre for searching
+        waypoints = result.get("waypoints", [home])
+        route_centre_lat = sum(w[0] for w in waypoints) / len(waypoints)
+        route_centre_lon = sum(w[1] for w in waypoints) / len(waypoints)
+
+        fetch_col, info_col = st.columns([1, 3])
+        if fetch_col.button("Fetch Live Prices", type="primary"):
+            st.session_state.pop("fuel_station_data", None)  # force refresh
+
+        # Auto-fetch on first view or after button press
+        if "fuel_station_data" not in st.session_state:
+            with st.spinner("Fetching live UK fuel prices from retailer feeds..."):
+                price_data = _cached_fuel_prices(
+                    route_centre_lat, route_centre_lon,
+                    radius_km=search_radius, fuel_type=fuel_type,
+                )
+            st.session_state["fuel_station_data"] = price_data
+        else:
+            price_data = st.session_state["fuel_station_data"]
+
+        stations = price_data.get("stations", [])
+        sources_ok = price_data.get("sources_ok", [])
+        sources_failed = price_data.get("sources_failed", [])
+        updated_at = price_data.get("last_updated", "—")
+
+        if sources_ok:
+            info_col.caption(
+                f"Live prices fetched at {updated_at} from: {', '.join(sources_ok)}. "
+                + (f"Unavailable: {', '.join(sources_failed)}." if sources_failed else "")
+            )
+        else:
+            st.warning("Could not fetch live prices from any retailer feed. Check your internet connection.")
+
+        if not stations:
+            st.info(f"No {fuel_type} stations with live prices found within {search_radius:.0f} km. "
+                    "Try increasing the search radius.")
+        else:
+            price_key = "diesel_ppl" if fuel_type == "diesel" else "petrol_ppl"
+
+            # Score each station for ROI impact
+            scored = [
+                score_refuel_stop(
+                    s, waypoints,
+                    litres_needed=litres_needed,
+                    work_rate_ha_hr=work_rate,
+                    cost_per_ha=cost_per_ha,
+                    avg_speed_kmh=avg_speed,
+                    fuel_type=fuel_type,
+                )
+                for s in stations[:20]  # cap at 20 to keep UI clean
+            ]
+            # Sort by total ROI impact (cheapest net cost first)
+            scored.sort(key=lambda s: s["net_roi_impact"])
+
+            # Best = lowest net impact
+            best_station = scored[0]
+            cheapest_price = min(s["ppl"] for s in scored)
+
+            st.markdown(
+                f"**{len(scored)} stations found** — cheapest diesel: "
+                f"**{cheapest_price:.1f}p/L** | Best ROI stop: "
+                f"**{best_station['brand']} {best_station['postcode']}** "
+                f"({best_station['ppl']:.1f}p/L, £{best_station['net_roi_impact']:.2f} total cost incl. detour)"
+            )
+
+            # Comparison table
+            table_rows = []
+            for i, s in enumerate(scored):
+                ppl = s["ppl"]
+                is_best = i == 0
+                is_cheapest_price = ppl == cheapest_price
+                label = "Best ROI" if is_best else ("Cheapest price" if is_cheapest_price else "")
+                table_rows.append({
+                    "":                 label,
+                    "Brand":            s["brand"],
+                    "Address":          s.get("postcode", s.get("address", "")),
+                    f"{fuel_type.title()} (p/L)": f"{ppl:.1f}",
+                    "Fill cost":        f"£{s['fill_cost']:.2f}",
+                    "Detour":           f"{s['detour_km']:.1f} km",
+                    "Time lost":        f"{s['time_lost_min']:.0f} min",
+                    "Ha lost":          f"{s['ha_lost']:.1f} ha",
+                    "Revenue lost":     f"£{s['revenue_lost']:.2f}",
+                    "Total ROI cost":   f"£{s['net_roi_impact']:.2f}",
+                    "Dist from route":  f"{s.get('distance_from_centre_km', '?')} km",
+                })
+
+            df_stations = pd.DataFrame(table_rows)
+
+            def _highlight_best(row):
+                if row[""] == "Best ROI":
+                    return ["background-color: #d4edda"] * len(row)
+                if row[""] == "Cheapest price":
+                    return ["background-color: #d0eaff"] * len(row)
+                return [""] * len(row)
+
+            st.dataframe(
+                df_stations.style.apply(_highlight_best, axis=1),
+                use_container_width=True, hide_index=True,
+            )
+
+            # Station selector + live impact view
+            st.markdown("**Select a station to see the impact on your day:**")
+            station_options = [
+                f"{s['brand']} — {s.get('postcode', s.get('address', ''))} — "
+                f"{s['ppl']:.1f}p/L — £{s['net_roi_impact']:.2f} total"
+                for s in scored
+            ]
+            selected_idx = st.selectbox(
+                "Choose fuel station",
+                range(len(station_options)),
+                format_func=lambda i: station_options[i],
+                index=0,
+                key="selected_fuel_station_idx",
+            )
+
+            sel = scored[selected_idx]
+            best = scored[0]
+
+            # Impact summary for selected station vs best
+            st.markdown(f"**Impact of stopping at {sel['brand']} {sel.get('postcode', '')}:**")
+            ic1, ic2, ic3, ic4, ic5 = st.columns(5)
+            ic1.metric("Fuel price",      f"{sel['ppl']:.1f} p/L",
+                       delta=f"{sel['ppl'] - best['ppl']:+.1f}p vs best ROI" if selected_idx != 0 else "Best ROI stop",
+                       delta_color="inverse" if selected_idx != 0 else "off")
+            ic2.metric("Fill cost",       f"£{sel['fill_cost']:.2f}",
+                       delta=f"£{sel['fill_cost'] - best['fill_cost']:+.2f}" if selected_idx != 0 else None,
+                       delta_color="inverse")
+            ic3.metric("Detour + time",   f"{sel['detour_km']:.1f} km / {sel['time_lost_min']:.0f} min",
+                       delta=f"{sel['detour_km'] - best['detour_km']:+.1f} km vs best" if selected_idx != 0 else None,
+                       delta_color="inverse")
+            ic4.metric("Revenue lost",    f"£{sel['revenue_lost']:.2f}",
+                       delta=f"£{sel['revenue_lost'] - best['revenue_lost']:+.2f}" if selected_idx != 0 else None,
+                       delta_color="inverse")
+            ic5.metric("Total ROI cost",  f"£{sel['net_roi_impact']:.2f}",
+                       delta=f"£{sel['net_roi_impact'] - best['net_roi_impact']:+.2f} vs best" if selected_idx != 0 else None,
+                       delta_color="inverse")
+
+            # Adjusted day net after selected fuel stop
+            adjusted_net = net_margin - sel["net_roi_impact"]
+            if selected_idx == 0:
+                st.success(
+                    f"With this stop: net margin £{net_margin:.2f} → "
+                    f"**£{adjusted_net:.2f}** after fill-up "
+                    f"({sel['detour_km']:.1f} km detour, {sel['time_lost_min']:.0f} min lost)"
+                )
+            else:
+                extra_vs_best = sel["net_roi_impact"] - best["net_roi_impact"]
+                st.info(
+                    f"With this stop: net margin → **£{adjusted_net:.2f}**. "
+                    f"Costs **£{extra_vs_best:.2f} more** than the Best ROI option "
+                    f"({best['brand']} {best.get('postcode', '')} at {best['ppl']:.1f}p/L)."
+                )
+
+            st.caption(
+                "Prices from official UK retailer transparency feeds (CMA scheme). "
+                "Always verify prices at the pump. Total ROI cost = fill cost + revenue lost to detour."
+            )
 
     # ── Route Map ─────────────────────────────────────────────────────────────
     st.subheader("Route Map")
