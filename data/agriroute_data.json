@@ -388,7 +388,7 @@
     "LEXION 6000 Claas Combine"
   ],
   "fuel": {
-    "price_per_litre": 1.45,
+    "price_per_litre": 2.05,
     "road_litres_per_100km": 35.0,
     "op_litres_per_ha": {
       "Spraying": 4.0,
