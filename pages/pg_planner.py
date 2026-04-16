@@ -291,7 +291,6 @@ def render(data: dict):
 
     if not needs_refuel:
         st.session_state.pop("_scored_stations", None)
-        st.session_state.pop("_refuel_sel_latlon", None)
 
     if needs_refuel:
         rf1, rf2, rf3 = st.columns(3)
@@ -516,19 +515,38 @@ def render(data: dict):
         import folium
         from streamlit_folium import st_folium
 
-        waypoints = result.get("waypoints", [])
+        # ── Resolve selected fuel stop (set in refuel section earlier this render)
+        _scored_map  = st.session_state.get("_scored_stations", [])
+        _sel_idx_map = st.session_state.get("selected_fuel_station_idx")
+        _map_fuel_stop = None
+        if needs_refuel and _scored_map and _sel_idx_map is not None:
+            _map_fuel_stop = _scored_map[_sel_idx_map]
+
+        # ── Build route waypoints, inserting fuel stop if selected
+        waypoints = list(result.get("waypoints", []))
+        if _map_fuel_stop:
+            _insert_pos = min(
+                _map_fuel_stop.get("best_insertion", len(waypoints) - 2) + 1,
+                len(waypoints) - 1,
+            )
+            waypoints.insert(_insert_pos, (_map_fuel_stop["lat"], _map_fuel_stop["lon"]))
+
         mid_lat = sum(w[0] for w in waypoints) / len(waypoints)
         mid_lon = sum(w[1] for w in waypoints) / len(waypoints)
         m = folium.Map(location=[mid_lat, mid_lon], zoom_start=11, tiles="OpenStreetMap")
 
-        # OSRM route line
+        # ── OSRM route line (updated to include fuel stop if chosen)
         osrm = get_osrm_route(waypoints)
         if osrm and osrm.get("geometry"):
             line_coords = [[lat, lon] for lon, lat in osrm["geometry"]]
-            folium.PolyLine(line_coords, color="#2D6A4F", weight=4, opacity=0.8,
-                            tooltip=f"Route: {osrm['distance_km']:.1f} km, {osrm['duration_min']:.0f} min").add_to(m)
+            route_color   = "#1a6b9a" if _map_fuel_stop else "#2D6A4F"
+            route_tooltip = f"Route: {osrm['distance_km']:.1f} km, {osrm['duration_min']:.0f} min"
+            if _map_fuel_stop:
+                route_tooltip += f" (incl. {_map_fuel_stop['brand']} fuel stop)"
+            folium.PolyLine(line_coords, color=route_color, weight=4, opacity=0.8,
+                            tooltip=route_tooltip).add_to(m)
 
-        # Home base
+        # ── Home base
         folium.Marker(
             [home_lat, home_lon],
             popup="Home Base",
@@ -536,7 +554,7 @@ def render(data: dict):
             icon=folium.Icon(color="red", icon="home", prefix="fa"),
         ).add_to(m)
 
-        # Field stops
+        # ── Field stops
         for i, stop in enumerate(plan, 1):
             col = "red" if stop["priority_score"] >= 70 else ("orange" if stop["priority_score"] >= 40 else "green")
             popup_html = (
@@ -562,50 +580,68 @@ def render(data: dict):
                 ),
             ).add_to(m)
 
-        # Fuel stations — enrich popups with live prices if available
-        # Build a price lookup from whatever was fetched (keyed by rounded lat/lon)
-        _live_stations = st.session_state.get("fuel_station_data", {}).get("stations", [])
-        _price_lookup = {
-            (round(s["lat"], 3), round(s["lon"], 3)): s
-            for s in _live_stations
-        }
+        # ── Fuel stations: merge Overpass (from day plan) + live-price stations
+        # Build price lookup from live data
+        _live_fs   = st.session_state.get("fuel_station_data", {}).get("stations", [])
+        _price_lkp = {(round(s["lat"], 3), round(s["lon"], 3)): s for s in _live_fs}
 
-        def _find_live_price(lat, lon):
-            """Return live-price station dict if within ~200m, else None."""
-            for (llat, llon), ls in _price_lookup.items():
+        def _find_live_map(lat, lon):
+            for (llat, llon), s in _price_lkp.items():
                 if abs(lat - llat) < 0.002 and abs(lon - llon) < 0.002:
-                    return ls
+                    return s
             return None
 
-        # Which station (if any) has the user selected in the refuel section?
-        _sel_station = st.session_state.get("_refuel_sel_latlon")  # (lat, lon) stored below
+        # Merge: Overpass stations first, then any live-only stations not already present
+        _merged_fs  = []
+        _seen_fs    = set()
+        for s in result.get("fuel_stations", []):
+            key = (round(s["lat"], 2), round(s["lon"], 2))
+            if key not in _seen_fs:
+                _seen_fs.add(key)
+                _merged_fs.append(s)
+
+        for s in _live_fs[:20]:
+            key = (round(s["lat"], 2), round(s["lon"], 2))
+            if key not in _seen_fs:
+                _seen_fs.add(key)
+                # Normalise live-only station to same shape as Overpass
+                _merged_fs.append({
+                    "brand":       s.get("brand", ""),
+                    "name":        s.get("name", s.get("brand", "")),
+                    "address":     s.get("address", s.get("postcode", "")),
+                    "lat":         s["lat"],
+                    "lon":         s["lon"],
+                    "distance_km": s.get("distance_from_centre_km", 0),
+                })
+
+        # Selected station lat/lon (computed directly from scored list, no lag)
+        _sel_latlon = (_map_fuel_stop["lat"], _map_fuel_stop["lon"]) if _map_fuel_stop else None
 
         fuel_fg = folium.FeatureGroup(name="Fuel Stations", show=True)
-        for fs in result.get("fuel_stations", [])[:10]:
-            live = _find_live_price(fs["lat"], fs["lon"])
+        for fs in _merged_fs[:15]:
+            live = _find_live_map(fs["lat"], fs["lon"])
             dppl = live.get("diesel_ppl") if live else None
             pppl = live.get("petrol_ppl") if live else None
 
             price_html = ""
             if dppl:
-                price_html += f"<br>🔵 Diesel: <b>{dppl:.1f}p/L</b>"
+                price_html += f"<br>&#x1F535; Diesel: <b>{dppl:.1f}p/L</b>"
             if pppl:
-                price_html += f"<br>⚪ Petrol: {pppl:.1f}p/L"
+                price_html += f"<br>&#x26AA; Petrol: {pppl:.1f}p/L"
             if not live:
-                price_html += "<br><i>Price: not available (enter manually below)</i>"
+                price_html += "<br><i>Price: not available — enter manually in table below</i>"
 
             popup_html = (
                 f"<b>{fs['brand']}</b><br>"
                 f"{fs.get('address', '')}<br>"
-                f"{fs.get('distance_km', '?')} km from route centre"
+                f"{fs.get('distance_km', '?')} km from route"
                 f"{price_html}"
             )
 
-            # Highlight the selected refuel station in orange
             is_selected = bool(
-                _sel_station and
-                abs(fs["lat"] - _sel_station[0]) < 0.002 and
-                abs(fs["lon"] - _sel_station[1]) < 0.002
+                _sel_latlon and
+                abs(fs["lat"] - _sel_latlon[0]) < 0.002 and
+                abs(fs["lon"] - _sel_latlon[1]) < 0.002
             )
             marker_color = "orange" if is_selected else "gray"
             marker_icon  = "star"   if is_selected else "tint"
@@ -613,8 +649,8 @@ def render(data: dict):
             folium.Marker(
                 [fs["lat"], fs["lon"]],
                 popup=folium.Popup(popup_html, max_width=240),
-                tooltip=f"{'★ Selected: ' if is_selected else ''}{fs['brand']}"
-                        + (f" — {dppl:.1f}p/L diesel" if dppl else ""),
+                tooltip=(f"\u2605 Selected: " if is_selected else "") + fs["brand"]
+                        + (f" \u2014 {dppl:.1f}p/L" if dppl else ""),
                 icon=folium.Icon(color=marker_color, icon=marker_icon, prefix="fa"),
             ).add_to(fuel_fg)
         fuel_fg.add_to(m)
@@ -623,7 +659,10 @@ def render(data: dict):
         st_folium(m, width=None, height=500, use_container_width=True)
 
         if osrm:
-            st.caption(f"Road distance: {osrm['distance_km']:.1f} km | Est. drive: {osrm['duration_min']:.0f} min")
+            cap = f"Road distance: {osrm['distance_km']:.1f} km | Est. drive: {osrm['duration_min']:.0f} min"
+            if _map_fuel_stop:
+                cap += f" | Route includes {_map_fuel_stop['brand']} fuel stop (shown in blue)"
+            st.caption(cap)
 
     except ImportError:
         st.info("Install streamlit-folium for the route map.")
@@ -745,15 +784,8 @@ def render(data: dict):
             key="fuel_station_table",
         )
 
-        # Store selected refuel station lat/lon for map highlight
-        # (driven by the refuel selectbox in the section above)
-        _sel_idx = st.session_state.get("selected_fuel_station_idx")
-        _scored  = st.session_state.get("_scored_stations", [])
-        if needs_refuel and _scored and _sel_idx is not None:
-            _sel = _scored[_sel_idx]
-            st.session_state["_refuel_sel_latlon"] = (_sel["lat"], _sel["lon"])
-        else:
-            st.session_state.pop("_refuel_sel_latlon", None)
+        # (Map highlight is driven directly from _scored_stations + selected_fuel_station_idx
+        # in the map section above — no extra session state needed here)
     else:
         st.info("No fuel stations found near route (Overpass API may be unavailable).")
 
