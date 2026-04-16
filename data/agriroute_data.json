@@ -1,0 +1,400 @@
+{
+  "contractor": {
+    "name": "Max Newbert Ltd",
+    "address": "Manor Farm, Great Cressingham,  Thetford, Norfolk, IP25 6NL",
+    "cert_number": "168694351464321",
+    "phone": "+4474840 44375",
+    "email": "Max.Newbert@synegtna.com",
+    "operators": [
+      "Max Newbert",
+      "Trevor Newbert"
+    ],
+    "home_address": "Manor Farm, Great Cressingham,  Thetford, Norfolk, IP25 6NL",
+    "home_location": "Manor Farm, Great Cressingham,  Thetford, Norfolk, IP25 6NL",
+    "home_coords": {
+      "lat": 52.5825690729275,
+      "lon": 0.729275
+    }
+  },
+  "farms": {
+    "farm_20260416170558203284": {
+      "id": "farm_20260416170558203284",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:05:58.203284"
+    },
+    "farm_20260416170559866124": {
+      "id": "farm_20260416170559866124",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:05:59.866124"
+    },
+    "farm_20260416170605053207": {
+      "id": "farm_20260416170605053207",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:05.053207"
+    },
+    "farm_20260416170609202648": {
+      "id": "farm_20260416170609202648",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:09.202648"
+    },
+    "farm_20260416170614517968": {
+      "id": "farm_20260416170614517968",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:14.517968"
+    },
+    "farm_20260416170625785268": {
+      "id": "farm_20260416170625785268",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:25.785268"
+    },
+    "farm_20260416170626621152": {
+      "id": "farm_20260416170626621152",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:26.621152"
+    },
+    "farm_20260416170627284196": {
+      "id": "farm_20260416170627284196",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:27.284196"
+    },
+    "farm_20260416170627980904": {
+      "id": "farm_20260416170627980904",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:27.980904"
+    },
+    "farm_20260416170628616597": {
+      "id": "farm_20260416170628616597",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:28.616597"
+    },
+    "farm_20260416170629272553": {
+      "id": "farm_20260416170629272553",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:29.272553"
+    },
+    "farm_20260416170629882557": {
+      "id": "farm_20260416170629882557",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:29.882557"
+    },
+    "farm_20260416170637357243": {
+      "id": "farm_20260416170637357243",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickerham",
+      "lat": 52.605133,
+      "lon": 0.741218,
+      "fields": {},
+      "created": "2026-04-16T17:06:37.357243"
+    },
+    "farm_20260416170703651537": {
+      "id": "farm_20260416170703651537",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:03.651537"
+    },
+    "farm_20260416170712240097": {
+      "id": "farm_20260416170712240097",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:12.240097"
+    },
+    "farm_20260416170713503556": {
+      "id": "farm_20260416170713503556",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:13.503556"
+    },
+    "farm_20260416170714217516": {
+      "id": "farm_20260416170714217516",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:14.217516"
+    },
+    "farm_20260416170714872054": {
+      "id": "farm_20260416170714872054",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:14.872054"
+    },
+    "farm_20260416170715576101": {
+      "id": "farm_20260416170715576101",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:15.576101"
+    },
+    "farm_20260416170716201537": {
+      "id": "farm_20260416170716201537",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:16.201537"
+    },
+    "farm_20260416170716880513": {
+      "id": "farm_20260416170716880513",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {},
+      "created": "2026-04-16T17:07:16.880513"
+    },
+    "farm_20260416170731292692": {
+      "id": "farm_20260416170731292692",
+      "name": "Hall Estates",
+      "client_name": "J. Smith",
+      "address": "South Pickenham, Swaffham, Norfolk, PE37 8EA",
+      "lat": 52.6270636,
+      "lon": 0.7062686,
+      "fields": {
+        "field_20260416174020020845": {
+          "id": "field_20260416174020020845",
+          "name": "Top Field",
+          "hectares": 10.0,
+          "crop_type": "Winter Wheat",
+          "variety": "KWS Zyatt",
+          "bbch_stage": 31,
+          "disease_risk": "Low",
+          "variety_maturity": "Early",
+          "sow_date": "2025-09-30",
+          "lat": 52.607135,
+          "lon": 0.7062690736917,
+          "days_since_last_op": {
+            "Spraying": 0,
+            "Seeding / Drilling": 999,
+            "Fertiliser": 999,
+            "Harvest": 999
+          },
+          "completed_operations": [
+            "op_20260416174624860202"
+          ],
+          "files": [],
+          "created": "2026-04-16T17:40:20.020845"
+        },
+        "field_20260416174208823606": {
+          "id": "field_20260416174208823606",
+          "name": "Bottom Field",
+          "hectares": 36.0,
+          "crop_type": "Winter Wheat",
+          "variety": "SY Gleam",
+          "bbch_stage": 31,
+          "disease_risk": "Low",
+          "variety_maturity": "Mid",
+          "sow_date": "2025-09-25",
+          "lat": 52.607662,
+          "lon": 0.748434,
+          "days_since_last_op": {
+            "Spraying": 0,
+            "Seeding / Drilling": 999,
+            "Fertiliser": 999,
+            "Harvest": 999
+          },
+          "completed_operations": [
+            "op_20260416174626861248"
+          ],
+          "files": [],
+          "created": "2026-04-16T17:42:08.823606"
+        }
+      },
+      "created": "2026-04-16T17:07:31.292692"
+    },
+    "farm_20260416174336429113": {
+      "id": "farm_20260416174336429113",
+      "name": "Field View Farms",
+      "client_name": "T. Rogers",
+      "address": "Ickburgh, Thetford, Norfolk, IP26 5JA",
+      "lat": 52.520605,
+      "lon": 0.669785,
+      "fields": {
+        "field_20260416174438872732": {
+          "id": "field_20260416174438872732",
+          "name": "Grassy Field",
+          "hectares": 41.2,
+          "crop_type": "Winter Wheat",
+          "variety": "SY Insytor",
+          "bbch_stage": 30,
+          "disease_risk": "Medium",
+          "variety_maturity": "Late",
+          "sow_date": "2025-10-03",
+          "lat": 52.520605,
+          "lon": 0.669785,
+          "days_since_last_op": {
+            "Spraying": 999,
+            "Seeding / Drilling": 999,
+            "Fertiliser": 999,
+            "Harvest": 999
+          },
+          "completed_operations": [],
+          "files": [],
+          "created": "2026-04-16T17:44:38.872732"
+        }
+      },
+      "created": "2026-04-16T17:43:36.429113"
+    }
+  },
+  "operations_log": [
+    {
+      "id": "op_20260416174624860202",
+      "farm_id": "farm_20260416170731292692",
+      "field_id": "field_20260416174020020845",
+      "farm_name": "Hall Estates",
+      "field_name": "Top Field",
+      "operation": "Spraying",
+      "date": "2026-04-17",
+      "operator": "Max Newbert",
+      "hectares": 10.0,
+      "revenue": 80.0,
+      "products": [],
+      "application": {},
+      "weather": {},
+      "weather_warnings": [],
+      "buffer_zones": [],
+      "equipment": "",
+      "gps_system": "",
+      "notes": "",
+      "justification": {},
+      "created": "2026-04-16T17:46:24.860202"
+    },
+    {
+      "id": "op_20260416174626861248",
+      "farm_id": "farm_20260416170731292692",
+      "field_id": "field_20260416174208823606",
+      "farm_name": "Hall Estates",
+      "field_name": "Bottom Field",
+      "operation": "Spraying",
+      "date": "2026-04-17",
+      "operator": "Max Newbert",
+      "hectares": 36.0,
+      "revenue": 288.0,
+      "products": [],
+      "application": {},
+      "weather": {},
+      "weather_warnings": [],
+      "buffer_zones": [],
+      "equipment": "",
+      "gps_system": "",
+      "notes": "",
+      "justification": {},
+      "created": "2026-04-16T17:46:26.861248"
+    }
+  ],
+  "work_rates": {
+    "Spraying": 25.0,
+    "Seeding / Drilling": 8.0,
+    "Fertiliser": 30.0,
+    "Harvest": 6.0
+  },
+  "costs": {
+    "Spraying": 8.0,
+    "Seeding / Drilling": 35.0,
+    "Fertiliser": 12.0,
+    "Harvest": 75.0
+  },
+  "avg_speed_kmh": 50.0,
+  "max_day_hours": 10.0,
+  "default_start_hr": 7.0,
+  "equipment": [
+    "JD 332M Self-Propelled Sprayer",
+    "Amazone ZA-V/ZA-TS Fert dual disc spreader",
+    "Sumo DD 6 Trailed",
+    "LEXION 6000 Claas Combine"
+  ],
+  "fuel": {
+    "price_per_litre": 1.45,
+    "road_litres_per_100km": 35.0,
+    "op_litres_per_ha": {
+      "Spraying": 4.0,
+      "Seeding / Drilling": 16.0,
+      "Fertiliser": 6.0,
+      "Harvest": 28.0
+    }
+  }
+}
