@@ -328,26 +328,58 @@ def render(data: dict):
         else:
             price_data = st.session_state["fuel_station_data"]
 
-        stations = price_data.get("stations", [])
-        sources_ok = price_data.get("sources_ok", [])
-        sources_failed = price_data.get("sources_failed", [])
-        updated_at = price_data.get("last_updated", "—")
+        stations      = price_data.get("stations", [])
+        sources_ok    = price_data.get("sources_ok", [])
+        sources_failed= price_data.get("sources_failed", [])
+        updated_at    = price_data.get("last_updated", "—")
 
-        if sources_ok:
+        # ── Determine which station list and price source to use ──────────────
+        using_live_prices = bool(stations)
+
+        if using_live_prices:
             info_col.caption(
-                f"Live prices fetched at {updated_at} from: {', '.join(sources_ok)}. "
-                + (f"Unavailable: {', '.join(sources_failed)}." if sources_failed else "")
+                f"Live prices at {updated_at} from: {', '.join(sources_ok)}."
+                + (f" Unavailable: {', '.join(sources_failed)}." if sources_failed else "")
             )
         else:
-            st.warning("Could not fetch live prices from any retailer feed. Check your internet connection.")
+            # Fall back to Overpass stations already found during route build
+            overpass_stations = result.get("fuel_stations", [])
+            if sources_ok or sources_failed:
+                info_col.caption(
+                    "No live prices returned from retailer feeds"
+                    + (f" (tried: {', '.join(sources_ok + sources_failed)})" if sources_ok or sources_failed else "")
+                    + ". Using map-sourced stations — enter price manually below."
+                )
+            else:
+                info_col.caption("Live price feeds unavailable. Using map-sourced stations — enter price manually.")
+
+            if not overpass_stations:
+                st.info(
+                    "No fuel stations found near your route. "
+                    "Try rebuilding the day plan (which searches for nearby stations) "
+                    "or increase the search radius and try Fetch Live Prices again."
+                )
+            else:
+                # Manual price entry — default to setup page fuel price
+                setup_ppl = round(fuel_price * 100, 1)  # £/L → pence/L
+                manual_ppl = st.number_input(
+                    "Fuel price (pence per litre) — enter today's pump price",
+                    value=setup_ppl,
+                    min_value=50.0, max_value=300.0, step=0.1, format="%.1f",
+                    help=f"Defaulting to your Setup page rate (£{fuel_price:.3f}/L = {setup_ppl:.1f}p/L). "
+                         "Update to today's actual pump price.",
+                )
+                # Convert Overpass stations to the same format as live-price stations
+                for s in overpass_stations:
+                    s["diesel_ppl"] = manual_ppl
+                    s["petrol_ppl"] = manual_ppl
+                    s["distance_from_centre_km"] = s.get("distance_km", 0)
+                stations = overpass_stations
 
         if not stations:
-            st.info(f"No {fuel_type} stations with live prices found within {search_radius:.0f} km. "
-                    "Try increasing the search radius.")
+            pass  # message already shown above
         else:
-            price_key = "diesel_ppl" if fuel_type == "diesel" else "petrol_ppl"
-
-            # Score each station for ROI impact
+            # ── Shared scoring + display for both live-price and fallback ─────
             scored = [
                 score_refuel_stop(
                     s, waypoints,
@@ -357,41 +389,40 @@ def render(data: dict):
                     avg_speed_kmh=avg_speed,
                     fuel_type=fuel_type,
                 )
-                for s in stations[:20]  # cap at 20 to keep UI clean
+                for s in stations[:20]
             ]
-            # Sort by total ROI impact (cheapest net cost first)
             scored.sort(key=lambda s: s["net_roi_impact"])
 
-            # Best = lowest net impact
-            best_station = scored[0]
+            best_station  = scored[0]
             cheapest_price = min(s["ppl"] for s in scored)
+            price_label   = f"{cheapest_price:.1f}p/L" if using_live_prices else f"{cheapest_price:.1f}p/L (manual)"
 
             st.markdown(
-                f"**{len(scored)} stations found** — cheapest diesel: "
-                f"**{cheapest_price:.1f}p/L** | Best ROI stop: "
-                f"**{best_station['brand']} {best_station['postcode']}** "
-                f"({best_station['ppl']:.1f}p/L, £{best_station['net_roi_impact']:.2f} total cost incl. detour)"
+                f"**{len(scored)} stations found** — price: **{price_label}** | "
+                f"Best ROI stop: **{best_station['brand']} "
+                f"{best_station.get('postcode', best_station.get('address', ''))}** "
+                f"(£{best_station['net_roi_impact']:.2f} total cost incl. detour)"
             )
 
             # Comparison table
             table_rows = []
             for i, s in enumerate(scored):
-                ppl = s["ppl"]
-                is_best = i == 0
-                is_cheapest_price = ppl == cheapest_price
-                label = "Best ROI" if is_best else ("Cheapest price" if is_cheapest_price else "")
+                ppl      = s["ppl"]
+                is_best  = (i == 0)
+                is_cheap = (ppl == cheapest_price) and not is_best
+                label    = "Best ROI" if is_best else ("Cheapest price" if is_cheap else "")
                 table_rows.append({
-                    "":                 label,
-                    "Brand":            s["brand"],
-                    "Address":          s.get("postcode", s.get("address", "")),
-                    f"{fuel_type.title()} (p/L)": f"{ppl:.1f}",
-                    "Fill cost":        f"£{s['fill_cost']:.2f}",
-                    "Detour":           f"{s['detour_km']:.1f} km",
-                    "Time lost":        f"{s['time_lost_min']:.0f} min",
-                    "Ha lost":          f"{s['ha_lost']:.1f} ha",
-                    "Revenue lost":     f"£{s['revenue_lost']:.2f}",
-                    "Total ROI cost":   f"£{s['net_roi_impact']:.2f}",
-                    "Dist from route":  f"{s.get('distance_from_centre_km', '?')} km",
+                    "":               label,
+                    "Brand":          s["brand"],
+                    "Address":        s.get("postcode", s.get("address", "")),
+                    "Price (p/L)":    f"{ppl:.1f}" + ("" if using_live_prices else " *"),
+                    "Fill cost":      f"£{s['fill_cost']:.2f}",
+                    "Detour":         f"{s['detour_km']:.1f} km",
+                    "Time lost":      f"{s['time_lost_min']:.0f} min",
+                    "Ha lost":        f"{s['ha_lost']:.1f} ha",
+                    "Revenue lost":   f"£{s['revenue_lost']:.2f}",
+                    "Total ROI cost": f"£{s['net_roi_impact']:.2f}",
+                    "Dist (km)":      f"{s.get('distance_from_centre_km', s.get('distance_km', '?'))}",
                 })
 
             df_stations = pd.DataFrame(table_rows)
@@ -408,11 +439,14 @@ def render(data: dict):
                 use_container_width=True, hide_index=True,
             )
 
+            if not using_live_prices:
+                st.caption("* Price entered manually above — update if you know this station's actual price.")
+
             # Station selector + live impact view
             st.markdown("**Select a station to see the impact on your day:**")
             station_options = [
                 f"{s['brand']} — {s.get('postcode', s.get('address', ''))} — "
-                f"{s['ppl']:.1f}p/L — £{s['net_roi_impact']:.2f} total"
+                f"{s['ppl']:.1f}p/L — £{s['net_roi_impact']:.2f} total cost"
                 for s in scored
             ]
             selected_idx = st.selectbox(
@@ -423,29 +457,27 @@ def render(data: dict):
                 key="selected_fuel_station_idx",
             )
 
-            sel = scored[selected_idx]
+            sel  = scored[selected_idx]
             best = scored[0]
 
-            # Impact summary for selected station vs best
-            st.markdown(f"**Impact of stopping at {sel['brand']} {sel.get('postcode', '')}:**")
+            st.markdown(f"**Impact of stopping at {sel['brand']} {sel.get('postcode', sel.get('address', ''))}:**")
             ic1, ic2, ic3, ic4, ic5 = st.columns(5)
-            ic1.metric("Fuel price",      f"{sel['ppl']:.1f} p/L",
-                       delta=f"{sel['ppl'] - best['ppl']:+.1f}p vs best ROI" if selected_idx != 0 else "Best ROI stop",
-                       delta_color="inverse" if selected_idx != 0 else "off")
-            ic2.metric("Fill cost",       f"£{sel['fill_cost']:.2f}",
+            ic1.metric("Fuel price",    f"{sel['ppl']:.1f} p/L",
+                       delta="Best ROI stop" if selected_idx == 0 else f"{sel['ppl'] - best['ppl']:+.1f}p vs best ROI",
+                       delta_color="off" if selected_idx == 0 else "inverse")
+            ic2.metric("Fill cost",     f"£{sel['fill_cost']:.2f}",
                        delta=f"£{sel['fill_cost'] - best['fill_cost']:+.2f}" if selected_idx != 0 else None,
                        delta_color="inverse")
-            ic3.metric("Detour + time",   f"{sel['detour_km']:.1f} km / {sel['time_lost_min']:.0f} min",
+            ic3.metric("Detour / time", f"{sel['detour_km']:.1f} km / {sel['time_lost_min']:.0f} min",
                        delta=f"{sel['detour_km'] - best['detour_km']:+.1f} km vs best" if selected_idx != 0 else None,
                        delta_color="inverse")
-            ic4.metric("Revenue lost",    f"£{sel['revenue_lost']:.2f}",
+            ic4.metric("Revenue lost",  f"£{sel['revenue_lost']:.2f}",
                        delta=f"£{sel['revenue_lost'] - best['revenue_lost']:+.2f}" if selected_idx != 0 else None,
                        delta_color="inverse")
-            ic5.metric("Total ROI cost",  f"£{sel['net_roi_impact']:.2f}",
+            ic5.metric("Total ROI cost",f"£{sel['net_roi_impact']:.2f}",
                        delta=f"£{sel['net_roi_impact'] - best['net_roi_impact']:+.2f} vs best" if selected_idx != 0 else None,
                        delta_color="inverse")
 
-            # Adjusted day net after selected fuel stop
             adjusted_net = net_margin - sel["net_roi_impact"]
             if selected_idx == 0:
                 st.success(
@@ -454,17 +486,24 @@ def render(data: dict):
                     f"({sel['detour_km']:.1f} km detour, {sel['time_lost_min']:.0f} min lost)"
                 )
             else:
-                extra_vs_best = sel["net_roi_impact"] - best["net_roi_impact"]
+                extra = sel["net_roi_impact"] - best["net_roi_impact"]
                 st.info(
                     f"With this stop: net margin → **£{adjusted_net:.2f}**. "
-                    f"Costs **£{extra_vs_best:.2f} more** than the Best ROI option "
+                    f"Costs **£{extra:.2f} more** than the Best ROI option "
                     f"({best['brand']} {best.get('postcode', '')} at {best['ppl']:.1f}p/L)."
                 )
 
-            st.caption(
-                "Prices from official UK retailer transparency feeds (CMA scheme). "
-                "Always verify prices at the pump. Total ROI cost = fill cost + revenue lost to detour."
-            )
+            if using_live_prices:
+                st.caption(
+                    "Prices from official UK retailer feeds (CMA transparency scheme). "
+                    "Always verify at the pump. Total ROI cost = fill cost + revenue lost to detour time."
+                )
+            else:
+                st.caption(
+                    "Stations sourced via OpenStreetMap. Prices are manually entered — "
+                    "fetch live prices above for retailer-reported rates. "
+                    "Total ROI cost = fill cost + revenue lost to detour time."
+                )
 
     # ── Route Map ─────────────────────────────────────────────────────────────
     st.subheader("Route Map")
