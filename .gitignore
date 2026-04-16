@@ -1,0 +1,15 @@
+# Data and uploads — each user keeps their own locally
+data/agriroute_data.json
+uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db

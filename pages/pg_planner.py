@@ -1,0 +1,311 @@
+"""Day Planner — optimised route + ROI + fuel stop suggestions."""
+import streamlit as st
+import pandas as pd
+from datetime import date, timedelta
+from utils.data_models import (save_data, calc_priority_score,
+                                OPERATION_TYPES, DEFAULT_WORK_RATES, DEFAULT_COSTS)
+from utils.routing import build_day_plan, get_osrm_route, haversine_km
+from utils.weather import check_operation_window, THRESHOLDS
+
+
+def _all_fields_flat(farms: dict) -> list:
+    out = []
+    for farm_id, farm in farms.items():
+        for fid, field in farm.get("fields", {}).items():
+            f = field.copy()
+            f["farm_id"]   = farm_id
+            f["farm_name"] = farm["name"]
+            out.append(f)
+    return out
+
+
+def render(data: dict):
+    st.title("Day Planner")
+
+    contractor = data.get("contractor", {})
+    farms      = data.get("farms", {})
+
+    if not contractor.get("home_coords"):
+        st.warning("Set your home base in **Contractor Setup** first.")
+        return
+    if not farms:
+        st.warning("Add farms and fields in **Farms & Fields** first.")
+        return
+
+    home_lat = contractor["home_coords"]["lat"]
+    home_lon = contractor["home_coords"]["lon"]
+
+    # ── Plan controls — on main page ──────────────────────────────────────────
+    st.subheader("1. Plan Settings")
+    with st.container(border=True):
+        row1 = st.columns([2, 2, 1.5, 1.5])
+        op_type   = row1[0].selectbox(
+            "Operation Type",
+            OPERATION_TYPES,
+            help="Select the type of operation you are planning for today",
+        )
+        plan_date = row1[1].date_input("Date", value=date.today() + timedelta(days=1))
+        start_hr  = row1[2].number_input(
+            "Start time (hr)",
+            value=float(data.get("default_start_hr", 7)),
+            min_value=4.0, max_value=12.0, step=0.5,
+        )
+        max_hrs   = row1[3].number_input(
+            "Max hours in day",
+            value=float(data.get("max_day_hours", 10)),
+            min_value=2.0, max_value=16.0, step=0.5,
+        )
+
+        row2 = st.columns([2, 2, 1.5, 1.5])
+        work_rate = row2[0].number_input(
+            "Work rate (ha/hr)",
+            value=float(data.get("work_rates", DEFAULT_WORK_RATES).get(op_type, 10)),
+            min_value=0.5, step=0.5,
+            help="Your effective field work rate for this operation",
+        )
+        cost_per_ha = row2[1].number_input(
+            "Charge (£/ha)",
+            value=float(data.get("costs", DEFAULT_COSTS).get(op_type, 10)),
+            min_value=0.0, step=1.0,
+        )
+        avg_speed = row2[2].number_input(
+            "Road speed (km/h)",
+            value=float(data.get("avg_speed_kmh", 50)),
+            min_value=10.0, max_value=120.0, step=5.0,
+        )
+        min_score = row2[3].slider("Min priority score", 0, 100, 0)
+
+    all_fields = _all_fields_flat(farms)
+
+    # Score fields
+    for f in all_fields:
+        f["_priority_score"] = calc_priority_score(f, op_type)
+
+    eligible = [f for f in all_fields if f["_priority_score"] >= min_score]
+
+    if not eligible:
+        st.info(f"No fields meet the minimum priority score of {min_score} for {op_type}.")
+        return
+
+    # ── Field selection ───────────────────────────────────────────────────────
+    st.subheader("Select Fields for Today")
+
+    score_df = pd.DataFrame([{
+        "": True,
+        "Farm":     f["farm_name"],
+        "Field":    f["name"],
+        "Crop":     f.get("crop_type", ""),
+        "Ha":       f.get("hectares", 0),
+        "BBCH":     f.get("bbch_stage", 0),
+        "Disease":  f.get("disease_risk", "Low"),
+        "Score":    round(f["_priority_score"], 1),
+    } for f in sorted(eligible, key=lambda x: -x["_priority_score"])])
+
+    edited = st.data_editor(score_df, use_container_width=True, hide_index=True,
+                             column_config={"": st.column_config.CheckboxColumn("Include", default=True)})
+
+    selected_names = set(edited[edited[""] == True]["Field"].tolist())
+    selected_fields = [f for f in eligible if f["name"] in selected_names]
+
+    if not selected_fields:
+        st.info("Select at least one field.")
+        return
+
+    # ── Weather check ─────────────────────────────────────────────────────────
+    st.subheader("Weather Check")
+    date_str = str(plan_date)
+    # Use first field's coords as representative
+    rep = selected_fields[0]
+    wx = check_operation_window(rep["lat"], rep["lon"], op_type,
+                                 start_hour=int(start_hr),
+                                 duration_hours=int(max_hrs),
+                                 target_date=date_str)
+    if wx["ok"]:
+        st.success(" | ".join(wx["warnings"]))
+    else:
+        for w in wx["warnings"]:
+            st.warning(w)
+
+    if wx.get("summary"):
+        s = wx["summary"]
+        wc1, wc2, wc3, wc4 = st.columns(4)
+        wc1.metric("Max Wind", f"{s['max_wind_ms']} m/s ({s['max_wind_mph']} mph)")
+        wc2.metric("Rainfall", f"{s['total_rain_mm']} mm")
+        wc3.metric("Min Temp", f"{s['min_temp']} °C")
+        wc4.metric("Max Temp", f"{s['max_temp']} °C")
+
+    if not wx["ok"]:
+        proceed = st.checkbox("Weather warning — proceed anyway?", value=False)
+        if not proceed:
+            st.stop()
+
+    # ── Build plan ────────────────────────────────────────────────────────────
+    if st.button("Build Day Plan", type="primary"):
+        with st.spinner("Optimising route..."):
+            result = build_day_plan(
+                home_lat=home_lat, home_lon=home_lon,
+                fields=selected_fields,
+                operation=op_type,
+                work_rate_ha_hr=work_rate,
+                cost_per_ha=cost_per_ha,
+                start_time_hr=start_hr,
+                max_hours=max_hrs,
+                avg_speed_kmh=avg_speed,
+            )
+        st.session_state["day_plan"] = result
+        st.session_state["day_plan_op"] = op_type
+        st.session_state["plan_date"] = date_str
+
+    if "day_plan" not in st.session_state:
+        return
+
+    result   = st.session_state["day_plan"]
+    plan     = result["plan"]
+    op_label = st.session_state.get("day_plan_op", op_type)
+
+    st.markdown("---")
+    st.subheader(f"Day Plan — {op_label} — {st.session_state.get('plan_date', date_str)}")
+
+    # Summary metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Fields", result["fields_count"])
+    m2.metric("Total Ha", f"{result['total_ha']} ha")
+    m3.metric("Revenue", f"£{result['total_revenue']:,.2f}")
+    m4.metric("Finish / Return", f"{result['finish_time']} / {result['return_time']}")
+
+    # Detailed schedule table
+    plan_rows = []
+    for i, stop in enumerate(plan, 1):
+        plan_rows.append({
+            "#":        i,
+            "Farm":     stop["farm_name"],
+            "Field":    stop["field_name"],
+            "Crop":     stop["crop_type"],
+            "Ha":       stop["hectares"],
+            "Priority": stop["priority_score"],
+            "Travel":   f"{stop['travel_min']} min ({stop['distance_km']} km)",
+            "Arrive":   stop["arrive_time"],
+            "Finish":   stop["finish_time"],
+            "Revenue":  f"£{stop['revenue']:,.2f}",
+            "Full":     "Yes" if stop["full_field"] else "Partial",
+        })
+
+    df_plan = pd.DataFrame(plan_rows)
+    st.dataframe(df_plan, use_container_width=True, hide_index=True)
+
+    # ── Route Map ─────────────────────────────────────────────────────────────
+    st.subheader("Route Map")
+    try:
+        import folium
+        from streamlit_folium import st_folium
+
+        waypoints = result.get("waypoints", [])
+        mid_lat = sum(w[0] for w in waypoints) / len(waypoints)
+        mid_lon = sum(w[1] for w in waypoints) / len(waypoints)
+        m = folium.Map(location=[mid_lat, mid_lon], zoom_start=11, tiles="OpenStreetMap")
+
+        # OSRM route line
+        osrm = get_osrm_route(waypoints)
+        if osrm and osrm.get("geometry"):
+            line_coords = [[lat, lon] for lon, lat in osrm["geometry"]]
+            folium.PolyLine(line_coords, color="#2D6A4F", weight=4, opacity=0.8,
+                            tooltip=f"Route: {osrm['distance_km']:.1f} km, {osrm['duration_min']:.0f} min").add_to(m)
+
+        # Home base
+        folium.Marker(
+            [home_lat, home_lon],
+            popup="Home Base",
+            tooltip="Home Base (Start/End)",
+            icon=folium.Icon(color="red", icon="home", prefix="fa"),
+        ).add_to(m)
+
+        # Field stops
+        for i, stop in enumerate(plan, 1):
+            col = "red" if stop["priority_score"] >= 70 else ("orange" if stop["priority_score"] >= 40 else "green")
+            popup_html = (
+                f"<b>#{i} {stop['field_name']}</b><br>"
+                f"{stop['farm_name']}<br>"
+                f"{stop['crop_type']} | {stop['hectares']} ha<br>"
+                f"Arrive: {stop['arrive_time']} | Finish: {stop['finish_time']}<br>"
+                f"Revenue: £{stop['revenue']:,.2f}"
+            )
+            folium.CircleMarker(
+                [stop["lat"], stop["lon"]],
+                radius=10, color=col, fill=True, fill_color=col, fill_opacity=0.8,
+                popup=folium.Popup(popup_html, max_width=220),
+                tooltip=f"#{i} {stop['field_name']}",
+            ).add_to(m)
+            folium.Marker(
+                [stop["lat"], stop["lon"]],
+                icon=folium.DivIcon(
+                    html=f'<div style="font-size:11px;font-weight:bold;color:white;'
+                         f'background:{col};border-radius:50%;width:22px;height:22px;'
+                         f'display:flex;align-items:center;justify-content:center;">{i}</div>',
+                    icon_size=(22, 22), icon_anchor=(11, 11),
+                ),
+            ).add_to(m)
+
+        # Fuel stations
+        fuel_fg = folium.FeatureGroup(name="Fuel Stations", show=True)
+        for fs in result.get("fuel_stations", [])[:5]:
+            folium.Marker(
+                [fs["lat"], fs["lon"]],
+                popup=f"<b>{fs['brand']}</b><br>{fs.get('address','')}<br>{fs['distance_km']} km from route",
+                tooltip=f"Fuel: {fs['brand']}",
+                icon=folium.Icon(color="gray", icon="tint", prefix="fa"),
+            ).add_to(fuel_fg)
+        fuel_fg.add_to(m)
+
+        folium.LayerControl().add_to(m)
+        st_folium(m, width=None, height=500, use_container_width=True)
+
+        if osrm:
+            st.caption(f"Road distance: {osrm['distance_km']:.1f} km | Est. drive: {osrm['duration_min']:.0f} min")
+
+    except ImportError:
+        st.info("Install streamlit-folium for the route map.")
+
+    # ── Fuel Stations ─────────────────────────────────────────────────────────
+    fuel_stations = result.get("fuel_stations", [])
+    if fuel_stations:
+        st.subheader("Fuel Stations Near Route")
+        st.caption("Check current prices before visiting. Displayed nearest to route midpoint.")
+        fuel_rows = [{
+            "Brand":    fs["brand"],
+            "Name":     fs["name"],
+            "Address":  fs.get("address", ""),
+            "Dist (km)": fs["distance_km"],
+        } for fs in fuel_stations]
+        st.dataframe(pd.DataFrame(fuel_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No fuel stations found near route (Overpass API may be unavailable).")
+
+    # ── Save to log ────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Mark Operations as Complete")
+    st.markdown("After completing a field, mark it done to update the operations log.")
+
+    for stop in plan:
+        col_a, col_b = st.columns([4, 1])
+        col_a.markdown(f"**{stop['field_name']}** ({stop['farm_name']}) — {stop['hectares']} ha")
+        if col_b.button("Mark Done", key=f"done_{stop['field_id']}"):
+            from utils.data_models import new_operation_log
+            log_entry = new_operation_log(
+                farm_id=stop["farm_id"], field_id=stop["field_id"],
+                farm_name=stop["farm_name"], field_name=stop["field_name"],
+                operation=op_label,
+                date=st.session_state.get("plan_date", date_str),
+                operator=contractor.get("operators", [""])[0],
+                hectares=stop["hectares"],
+                revenue=stop["revenue"],
+            )
+            data.setdefault("operations_log", []).append(log_entry)
+            # Update days_since_last_op
+            fid   = stop["field_id"]
+            fmid  = stop["farm_id"]
+            if fmid in data["farms"] and fid in data["farms"][fmid]["fields"]:
+                data["farms"][fmid]["fields"][fid]["days_since_last_op"][op_label] = 0
+                data["farms"][fmid]["fields"][fid]["completed_operations"].append(log_entry["id"])
+            save_data(data)
+            st.success(f"{stop['field_name']} marked as complete.")
+            st.rerun()
