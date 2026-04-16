@@ -309,7 +309,7 @@ def render(data: dict):
         )
 
         # Route centre for searching
-        waypoints = result.get("waypoints", [home])
+        waypoints = result.get("waypoints", [(home_lat, home_lon)])
         route_centre_lat = sum(w[0] for w in waypoints) / len(waypoints)
         route_centre_lon = sum(w[1] for w in waypoints) / len(waypoints)
 
